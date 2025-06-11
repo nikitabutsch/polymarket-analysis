@@ -35,8 +35,7 @@ def main():
     print("Preparing data for analysis...")
     df_long = analysis.prepare_long_dataframe(df_prices)
     
-    print("Calculating belief metrics...")
-    df_long = analysis.calculate_belief_metrics(df_long)
+    print("Calculating rolling belief spread...")
     df_long = analysis.calculate_rolling_belief_spread(df_long, window_size=ROLLING_WINDOW)
 
     print("Calculating convergence metrics...")

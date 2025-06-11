@@ -56,38 +56,40 @@ def compute_belief_update(p0, p1):
         # Normalize by the potential loss
         return (p0 - p1) / p0 if p0 != 0 else 0.0
 
-def calculate_belief_metrics(df_long):
-    """
-    Calculates belief updates and their cumulative spread for each market.
-
-    Args:
-        df_long (pd.DataFrame): A long-format DataFrame from `prepare_long_dataframe`.
-
-    Returns:
-        pd.DataFrame: The input DataFrame with added columns: 'b_i' (belief update),
-            'cum_max_b', 'cum_min_b', and 'delta_b' (cumulative spread).
-    """
-    df_long["b_i"] = df_long.apply(lambda r: compute_belief_update(r.p_prev, r.p_t), axis=1)
-    df_long["cum_max_b"] = df_long.groupby("market")["b_i"].cummax()
-    df_long["cum_min_b"] = df_long.groupby("market")["b_i"].cummin()
-    df_long["delta_b"] = df_long["cum_max_b"] - df_long["cum_min_b"]
-    return df_long
+# def calculate_belief_metrics(df_long):
+#     """
+#     Calculates belief updates and their cumulative spread for each market.
+#
+#     Args:
+#         df_long (pd.DataFrame): A long-format DataFrame from `prepare_long_dataframe`.
+#
+#     Returns:
+#         pd.DataFrame: The input DataFrame with added columns: 'b_i' (belief update),
+#             'cum_max_b', 'cum_min_b', and 'delta_b' (cumulative spread).
+#     """
+#     df_long["b_i"] = df_long.apply(lambda r: compute_belief_update(r.p_prev, r.p_t), axis=1)
+#     df_long["cum_max_b"] = df_long.groupby("market")["b_i"].cummax()
+#     df_long["cum_min_b"] = df_long.groupby("market")["b_i"].cummin()
+#     df_long["delta_b"] = df_long["cum_max_b"] - df_long["cum_min_b"]
+#     return df_long
 
 def calculate_rolling_belief_spread(df_long, window_size):
     """
-    Calculates the spread of belief updates over a rolling window.
+    Calculates the belief update `b_i` and its spread over a rolling window.
 
-    This captures recent volatility by finding the difference between the min
+    This first computes the belief update `b_i` for each snapshot. Then, it
+    captures recent volatility by finding the difference between the min
     and max belief updates within the last `window_size` number of snapshots.
 
     Args:
-        df_long (pd.DataFrame): Long-format DataFrame with a 'b_i' column.
+        df_long (pd.DataFrame): DataFrame from `prepare_long_dataframe`.
         window_size (int): The size of the rolling window.
 
     Returns:
-        pd.DataFrame: The input DataFrame with added columns: 'b_roll_max',
+        pd.DataFrame: The input DataFrame with added columns: 'b_i', 'b_roll_max',
             'b_roll_min', and 'delta_b_roll' (the rolling spread).
     """
+    df_long["b_i"] = df_long.apply(lambda r: compute_belief_update(r.p_prev, r.p_t), axis=1)
     df_long["b_roll_max"] = (
         df_long
         .groupby("market")["b_i"]
