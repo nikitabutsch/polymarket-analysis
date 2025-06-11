@@ -73,33 +73,46 @@ def compute_belief_update(p0, p1):
 #     df_long["delta_b"] = df_long["cum_max_b"] - df_long["cum_min_b"]
 #     return df_long
 
-def calculate_rolling_belief_spread(df_long, window_size):
+def calculate_rolling_belief_spread(df_long, window_size_str):
     """
-    Calculates the belief update `b_i` and its spread over a rolling window.
+    Calculates the belief update `b_i` and its spread over a rolling time window.
 
     This first computes the belief update `b_i` for each snapshot. Then, it
     captures recent volatility by finding the difference between the min
-    and max belief updates within the last `window_size` number of snapshots.
+    and max belief updates within a time-based rolling window specified by
+    `window_size_str`.
 
     Args:
         df_long (pd.DataFrame): DataFrame from `prepare_long_dataframe`.
-        window_size (int): The size of the rolling window.
+        window_size_str (str): The size of the rolling window as a pandas
+            time offset string (e.g., '1D', '12H').
 
     Returns:
         pd.DataFrame: The input DataFrame with added columns: 'b_i', 'b_roll_max',
             'b_roll_min', and 'delta_b_roll' (the rolling spread).
     """
     df_long["b_i"] = df_long.apply(lambda r: compute_belief_update(r.p_prev, r.p_t), axis=1)
-    df_long["b_roll_max"] = (
-        df_long
+
+    # For time-based rolling, we need a DatetimeIndex.
+    df_with_time_index = df_long.set_index('time')
+
+    # Use transform with a lambda to apply rolling on a time window for each market.
+    # The lambda function receives a Series with a DatetimeIndex.
+    b_roll_max = (
+        df_with_time_index
         .groupby("market")["b_i"]
-        .transform(lambda x: x.rolling(window_size, min_periods=1).max())
+        .transform(lambda x: x.rolling(window_size_str, min_periods=1).max())
     )
-    df_long["b_roll_min"] = (
-        df_long
+    b_roll_min = (
+        df_with_time_index
         .groupby("market")["b_i"]
-        .transform(lambda x: x.rolling(window_size, min_periods=1).min())
+        .transform(lambda x: x.rolling(window_size_str, min_periods=1).min())
     )
+
+    # Assign the results back. Using .values is safe because transform preserves order.
+    df_long["b_roll_max"] = b_roll_max.values
+    df_long["b_roll_min"] = b_roll_min.values
+
     df_long["delta_b_roll"] = df_long["b_roll_max"] - df_long["b_roll_min"]
     return df_long
 
