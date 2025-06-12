@@ -2,6 +2,9 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
 import numpy as np
+import matplotlib.cm as cm
+import matplotlib
+import os
 
 def plot_price_histories(df_merged):
     """
@@ -124,4 +127,79 @@ def plot_annotated_rolling_belief_spread(df_long, window, df_thresh, df_half, df
 
     plt.grid(True, linestyle="--", alpha=0.3)
     plt.tight_layout(rect=[0, 0, 0.85, 1]) # Adjust layout
-    plt.show() 
+    plt.show()
+
+def plot_regimes(market_name: str, df_market_long: pd.DataFrame, df_regimes: pd.DataFrame):
+    """
+    Generates and saves a plot visualizing the volatility regimes for a single market.
+
+    This function creates a comprehensive plot with several layers:
+    1.  The rolling volatility of the market's price is plotted as a line graph.
+    2.  Each detected volatility regime is shown as a colored vertical span, with
+        the color indicating its relative volatility (green for low, red for high).
+    3.  The mean volatility (μ) for each regime is annotated on the plot.
+    4.  A subtitle clarifies that the colors are scaled locally for each market.
+
+    The resulting plot is saved to the 'output/' directory.
+
+    Args:
+        market_name (str): The name of the market being plotted.
+        df_market_long (pd.DataFrame): The long-format data for the specific market,
+            containing 'time' and 'volatility' columns.
+        df_regimes (pd.DataFrame): The regime data for the market, containing
+            'start_time', 'end_time', and 'mean_volatility'.
+    """
+    if df_regimes.empty:
+        print(f"No regimes to plot for market: {market_name}")
+        return
+
+    fig, ax = plt.subplots(figsize=(16, 6))
+
+    # Plot the volatility series
+    ax.plot(df_market_long["time"], df_market_long["volatility"], label="Rolling Volatility", color="black", alpha=0.8)
+
+    # --- Local Scaling for Colors ---
+    min_mean_vol = df_regimes["mean_volatility"].min()
+    max_mean_vol = df_regimes["mean_volatility"].max()
+    vol_range = max_mean_vol - min_mean_vol
+
+    # Overlay the regimes as shaded regions
+    for _, regime in df_regimes.iterrows():
+        # Normalize the mean volatility locally to show relative changes clearly
+        if vol_range > 1e-6:
+            norm_vol = (regime["mean_volatility"] - min_mean_vol) / vol_range
+        else:
+            norm_vol = 0.5  # Neutral color if all regimes have same avg volatility
+
+        cmap = matplotlib.colormaps.get_cmap("RdYlGn_r")
+        color = cmap(norm_vol)
+        ax.axvspan(regime["start_time"], regime["end_time"], color=color, alpha=0.3)
+
+        # Annotate the mean volatility (μ) for the regime
+        text_x = regime["start_time"] + (regime["end_time"] - regime["start_time"]) / 2
+        ax.text(
+            text_x,
+            ax.get_ylim()[1] * 0.95,
+            "μ={:.3f}".format(regime["mean_volatility"]),
+            verticalalignment="top",
+            ha="center",
+            fontsize=9,
+        )
+
+    ax.set_title(f"Volatility Regimes for: {market_name}", fontsize=14)
+    fig.suptitle("Colors are scaled locally to show relative changes. Compare absolute volatility using the μ values.", fontsize=10, y=0.92)
+
+    ax.set_ylabel("Rolling Volatility (Price Std Dev)")
+    ax.set_xlabel("Time")
+    ax.legend(loc="center left")
+    ax.grid(True, which="both", linestyle="--", linewidth=0.5)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+
+    # --- Save Figure ---
+    # Ensure output directory exists
+    if not os.path.exists("output"):
+        os.makedirs("output")
+        
+    safe_market_name = "".join(c for c in market_name if c.isalnum() or c in (" ", "_")).rstrip()
+    plt.savefig(f"output/regimes_{safe_market_name}.png", dpi=300)
+    plt.close(fig) 

@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
+import ruptures as rpt
+from typing import Optional
 
 def prepare_long_dataframe(df_prices):
     """
@@ -28,6 +30,10 @@ def prepare_long_dataframe(df_prices):
     df_long = df_long.sort_values(["market", "time"]).reset_index(drop=True)
     df_long["p_prev"] = df_long.groupby("market")["p_t"].shift(1)
     df_long = df_long.dropna(subset=["p_prev"])
+    
+    # Ensure p_t and p_prev are floats
+    df_long['p_t'] = df_long['p_t'].astype(float)
+    df_long['p_prev'] = df_long['p_prev'].astype(float)
     
     # Re-calculate snapshot index `i` after dropping rows
     df_long["i"] = df_long.groupby("market").cumcount() + 1
@@ -85,7 +91,7 @@ def calculate_rolling_belief_spread(df_long, window_size_str):
     Args:
         df_long (pd.DataFrame): DataFrame from `prepare_long_dataframe`.
         window_size_str (str): The size of the rolling window as a pandas
-            time offset string (e.g., '1D', '12H').
+            time offset string (e.g., '1d', '12h').
 
     Returns:
         pd.DataFrame: The input DataFrame with added columns: 'b_i', 'b_roll_max',
@@ -97,7 +103,6 @@ def calculate_rolling_belief_spread(df_long, window_size_str):
     df_with_time_index = df_long.set_index('time')
 
     # Use transform with a lambda to apply rolling on a time window for each market.
-    # The lambda function receives a Series with a DatetimeIndex.
     b_roll_max = (
         df_with_time_index
         .groupby("market")["b_i"]
@@ -109,19 +114,43 @@ def calculate_rolling_belief_spread(df_long, window_size_str):
         .transform(lambda x: x.rolling(window_size_str, min_periods=1).min())
     )
 
-    # Assign the results back. Using .values is safe because transform preserves order.
     df_long["b_roll_max"] = b_roll_max.values
     df_long["b_roll_min"] = b_roll_min.values
 
     df_long["delta_b_roll"] = df_long["b_roll_max"] - df_long["b_roll_min"]
     return df_long
 
+def calculate_rolling_volatility(df_long, window_size_str):
+    """
+    Calculates the rolling standard deviation of prices as a measure of volatility.
+
+    This function computes a time-based rolling standard deviation of the price (`p_t`)
+    for each market, providing a robust measure of price volatility over time.
+
+    Args:
+        df_long (pd.DataFrame): DataFrame from `prepare_long_dataframe`.
+        window_size_str (str): The size of the rolling window as a pandas
+            time offset string (e.g., '1d', '12h').
+
+    Returns:
+        pd.DataFrame: The input DataFrame with an added 'volatility' column.
+    """
+    # For time-based rolling, we need a DatetimeIndex.
+    df_with_time_index = df_long.set_index('time')
+
+    # Calculate rolling standard deviation of the price for each market.
+    rolling_std = (
+        df_with_time_index
+        .groupby("market")["p_t"]
+        .transform(lambda x: x.rolling(window_size_str, min_periods=1).std())
+    )
+    df_long["volatility"] = rolling_std.values
+    df_long["volatility"] = df_long["volatility"].fillna(0)  # First periods will be NaN
+    return df_long
+
 def get_first_nonzero_spread(df_long):
     """
     Finds the first snapshot index `i` where market volatility begins.
-
-    For each market, this identifies the first moment the rolling belief spread
-    becomes greater than zero.
 
     Args:
         df_long (pd.DataFrame): DataFrame with 'market', 'i', and 'delta_b_roll'.
@@ -135,6 +164,125 @@ def get_first_nonzero_spread(df_long):
         else None
         for market, grp in df_long.groupby("market")
     }
+
+def get_first_nonzero_volatility(df_long):
+    """
+    Finds the first snapshot index `i` where market volatility begins.
+
+    Args:
+        df_long (pd.DataFrame): DataFrame with 'market', 'i', and 'volatility'.
+
+    Returns:
+        dict: A map of {market_name: first_nonzero_index}.
+    """
+    return {
+        market: int(grp.loc[grp["volatility"] > 1e-6, "i"].min())
+        if (grp["volatility"] > 1e-6).any()
+        else None
+        for market, grp in df_long.groupby("market")
+    }
+
+
+def find_convergence_regimes(
+    df_long: pd.DataFrame,
+    first_nonzero: dict[str, Optional[int]],
+    pen: int = 10,
+    model: str = "l2",
+) -> pd.DataFrame:
+    """
+    Partition each market's volatility into stable regimes using PELT.
+
+    Uses the PELT (Pruned Exact Linear Time) algorithm to detect change points
+    in the `volatility` signal. This method is effective at finding shifts in a
+    signal's mean, making it ideal for identifying transitions between periods
+    of high and low price volatility.
+
+    The process identifies breakpoints in the time series, which are then used
+    to define distinct, contiguous regimes. For each regime, it calculates key
+    statistics like the mean and standard deviation of volatility, as well as
+    the duration.
+
+    Args:
+        df_long (pd.DataFrame): Long-format DataFrame with 'market', 'i',
+            'volatility', and 'time'.
+        first_nonzero (dict): Mapping from market to the first index where
+            `volatility` > 0, to ignore pre-activity data.
+        pen (float): Penalty parameter to control the sensitivity of the
+            change point detection. A higher penalty results in fewer regimes.
+        model (str): The cost function for the PELT algorithm. "l2" is used
+            for finding changes in the mean of the signal.
+
+    Returns:
+        pd.DataFrame: A DataFrame where each row represents a detected regime,
+            with columns: 'market', 'regime', 'start_time', 'end_time',
+            'mean_volatility', etc.
+    """
+    regime_rows = []
+    for market, grp in df_long.groupby("market"):
+        i0 = first_nonzero.get(market)
+        if i0 is None:
+            continue
+        # Subset to data from ignition point onward
+        sub = grp.loc[grp["i"] >= i0].reset_index(drop=True)
+        if sub.empty:
+            continue
+
+        series = sub["volatility"].values
+        # Detect breakpoints using PELT with an l2 cost function
+        algo = rpt.Pelt(model=model).fit(series)
+        breakpoints = algo.predict(pen=pen)
+
+        # Convert breakpoints to regimes
+        start_idx = 0
+        for regime_idx, bkp in enumerate(breakpoints):
+            end_idx = bkp
+
+            if start_idx >= end_idx:
+                continue
+
+            regime_slice = sub.iloc[start_idx:end_idx]
+            
+            start_row = regime_slice.iloc[0]
+            end_row = regime_slice.iloc[-1]
+
+            # Compute regime-level statistics
+            regime_vol = regime_slice["volatility"]
+            mean_vol = regime_vol.mean()
+            std_vol = regime_vol.std(ddof=0)  # ddof=0 handles single-point regimes
+            duration = end_row["time"] - start_row["time"]
+
+            regime_rows.append({
+                "market": market,
+                "regime": regime_idx,
+                "start_i": int(start_row["i"]),
+                "end_i": int(end_row["i"]),
+                "start_time": start_row["time"],
+                "end_time": end_row["time"],
+                "mean_volatility": mean_vol,
+                "std_volatility": std_vol,
+                "duration": duration,
+            })
+            start_idx = end_idx
+    
+    if not regime_rows:
+        return pd.DataFrame()
+
+    df_regimes = pd.DataFrame(regime_rows)
+
+    # Post-process to make regime visualizations contiguous.
+    # The `end_time` of one regime is set to the `start_time` of the next one
+    # to avoid visual gaps in the plots.
+    df_regimes = df_regimes.sort_values(["market", "start_time"])
+    df_regimes["end_time"] = (
+        df_regimes.groupby("market")["start_time"]
+        .shift(-1)
+        .fillna(df_regimes["end_time"])  # Keep original end_time for the last regime
+    )
+    
+    # Recalculate duration based on the new contiguous end_time
+    df_regimes["duration"] = df_regimes["end_time"] - df_regimes["start_time"]
+
+    return df_regimes
 
 def calculate_threshold_hits(df_long, first_nonzero, thresholds):
     """
@@ -156,11 +304,11 @@ def calculate_threshold_hits(df_long, first_nonzero, thresholds):
     thresh_rows = []
     for market, grp in df_long.groupby("market"):
         i0 = first_nonzero.get(market)
-        for δ in thresholds:
+        for delta in thresholds:
             if i0 is None:
                 i_hit, t_hit = None, None
             else:
-                mask = (grp["i"] >= i0) & (grp["delta_b_roll"] <= δ)
+                mask = (grp["i"] >= i0) & (grp["volatility"] <= delta)
                 if mask.any():
                     hit_row = grp.loc[mask].iloc[0]
                     i_hit = int(hit_row["i"])
@@ -168,7 +316,7 @@ def calculate_threshold_hits(df_long, first_nonzero, thresholds):
                 else:
                     i_hit, t_hit = None, None
             thresh_rows.append({
-                "market": market, "threshold": δ,
+                "market": market, "threshold": delta,
                 "I_delta": i_hit, "time_I_delta": t_hit
             })
     return pd.DataFrame(thresh_rows)
@@ -195,9 +343,9 @@ def calculate_half_life(df_long, first_nonzero):
             half_rows.append({"market": market, "initial_delta": None, "half_value": None, "i_half": None, "time_half": None})
             continue
 
-        initial_spread = grp.loc[grp["i"] == i0, "delta_b_roll"].iloc[0]
-        half_val = 0.5 * initial_spread
-        mask = (grp["i"] >= i0) & (grp["delta_b_roll"] <= half_val)
+        initial_vol = grp.loc[grp["i"] == i0, "volatility"].iloc[0]
+        half_val = 0.5 * initial_vol
+        mask = (grp["i"] >= i0) & (grp["volatility"] <= half_val)
 
         if mask.any():
             hit_row = grp.loc[mask].iloc[0]
@@ -208,7 +356,7 @@ def calculate_half_life(df_long, first_nonzero):
 
         half_rows.append({
             "market": market,
-            "initial_delta": initial_spread,
+            "initial_delta": initial_vol,
             "half_value": half_val,
             "i_half": i_half,
             "time_half": t_half
@@ -238,14 +386,14 @@ def calculate_decay_rate(df_long, first_nonzero):
             decay_rows.append({"market": market, "lambda": None, "r2": None})
             continue
 
-        sub = grp.loc[(grp["i"] >= i0) & (grp["delta_b_roll"] > 0)].copy()
+        sub = grp.loc[(grp["i"] >= i0) & (grp["volatility"] > 1e-6)].copy()
         if len(sub) < 5:  # Need sufficient data for a meaningful regression
             decay_rows.append({"market": market, "lambda": None, "r2": None})
             continue
 
         sub["i_shifted"] = sub["i"] - i0
         X = sm.add_constant(sub["i_shifted"])
-        Y = np.log(sub["delta_b_roll"])
+        Y = np.log(sub["volatility"])
         model = sm.OLS(Y, X).fit()
         
         λ = -model.params.get("i_shifted", np.nan)
@@ -256,7 +404,7 @@ def calculate_auc(df_long, first_nonzero):
     """
     Calculates the Area Under the Curve (AUC) for the rolling belief spread.
 
-    This integrates the `delta_b_roll` with respect to the snapshot index `i`
+    This integrates the `volatility` with respect to the snapshot index `i`
     to quantify the total amount of disagreement/volatility over time for
     each market. A smaller AUC implies quicker convergence.
 
@@ -276,7 +424,7 @@ def calculate_auc(df_long, first_nonzero):
             auc = None
         else:
             # Use np.trapz for numerical integration.
-            auc = np.trapz(y=sub["delta_b_roll"], x=sub["i"])
+            auc = np.trapz(y=sub["volatility"], x=sub["i"])
             
         auc_rows.append({"market": market, "AUC": auc})
     return pd.DataFrame(auc_rows).sort_values("AUC")
