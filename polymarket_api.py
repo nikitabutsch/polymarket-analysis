@@ -52,15 +52,40 @@ def get_prices(market_id, fidelity):
 
 def get_trades(market_id):
     """
-    Returns a DataFrame where each row is a single trade,
-    with columns: ['timestamp', 'p_before', 'p_after', 'volume', 'direction'].
-    Note: This function is not currently used in the main pipeline.
+    NOTE: This endpoint (data-api.polymarket.com) appears to return the latest trades
+    across ALL markets, not for a specific market_id. The official, supported endpoint for
+    fetching trades by market is on clob.polymarket.com and requires authentication.
+    See: https://docs.polymarket.com/developers/CLOB/trades/trades
+
+    Returns a list of recent trades.
+    Each trade is a dict with keys like: ['proxyWallet', 'side', 'asset', 'conditionId', 'size', 'price', 'timestamp', 'title', ...].
     """
+    # The 'market' parameter in this URL doesn't seem to filter by market.
     url = f"https://data-api.polymarket.com/trades?market={market_id}"
     resp = requests.get(url, timeout=10)
     resp.raise_for_status()
     payload = resp.json()
     return payload
+
+def fetch_market_details(event_url: str) -> dict:
+    """
+    Given a full Polymarket event URL, returns a dict mapping the market question to its full market data object.
+
+    The volume can be accessed via the 'volume' or 'volumeNum' key in the market data dict.
+    Example:
+    details = fetch_market_details(event_url)
+    for question, market_data in details.items():
+        print(f"{question}: {market_data['volumeNum']}")
+    """
+    slug = extract_slug_from_event_url(event_url)
+    markets = fetch_markets_from_slug(slug)
+
+    mapping = {}
+    for market in markets:
+        question = market.get("question", "<no question>")
+        mapping[question] = market
+
+    return mapping
 
 # --------------------------------------------------------------------------
 # Higher-Level Functions

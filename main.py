@@ -3,11 +3,12 @@ import polymarket_api as api
 import analysis
 import plotting
 import numpy as np
+import warnings
 
 # --- Configuration ---
 EVENT_URL = "https://polymarket.com/event/poland-presidential-election"
 FIDELITY = 720  # Lower for more granular data, higher for less
-ROLLING_WINDOW = 5
+ROLLING_WINDOW = '3D'
 THRESHOLDS = [0.02, 0.01]
 # Use None to select all markets in the event
 # Example: COLUMN_NAMES_TO_PICK = ['Will Donald Trump win the 2024 US Presidential Election?']
@@ -36,7 +37,7 @@ def main():
     df_long = analysis.prepare_long_dataframe(df_prices)
     
     print("Calculating rolling belief spread...")
-    df_long = analysis.calculate_rolling_belief_spread(df_long, window_size=ROLLING_WINDOW)
+    df_long = analysis.calculate_rolling_belief_spread(df_long, window_size_str=ROLLING_WINDOW)
 
     print("Calculating convergence metrics...")
     first_nonzero = analysis.get_first_nonzero_spread(df_long)
@@ -76,5 +77,5 @@ def main():
 
 if __name__ == "__main__":
     # The 'trapz' function used in analysis.py is deprecated. This suppresses the warning.
-    np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)
+    warnings.filterwarnings('ignore', category=DeprecationWarning)
     main() 
