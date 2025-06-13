@@ -2,6 +2,9 @@ import requests
 import json
 from urllib.parse import urlparse
 import pandas as pd
+import os
+import datetime
+from tqdm import tqdm
 
 # --------------------------------------------------------------------------
 # Low-Level API Wrappers & Helpers
@@ -35,20 +38,90 @@ def fetch_markets_from_slug(slug: str) -> list:
     first_event = data[0]
     return first_event.get("markets", [])
 
-def get_prices(market_id, fidelity):
+def get_prices(market_id, fidelity, start_ts=None, end_ts=None, chunk_days=15, event_slug=None, data_dir=None):
     """
     Fetches price history for a given market token ID.
+    If start_ts and end_ts are provided, fetches data in chunks and caches results.
+    
+    Args:
+        market_id (str): The market's clobTokenId
+        fidelity (int): Fidelity parameter for the API
+        start_ts (int, optional): Unix timestamp for start of data
+        end_ts (int, optional): Unix timestamp for end of data
+        chunk_days (int, optional): Number of days per chunk when fetching historical data
+        event_slug (str, optional): Event slug for caching purposes
+        data_dir (str, optional): Directory to store the data files
+    
+    Returns:
+        list: List of price history points
     """
-    url = "https://clob.polymarket.com/prices-history"
-    params = {
-      "interval": "all",
-      "market": market_id,
-      "fidelity": fidelity
-    }
-    resp = requests.get(url, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    return data
+    # If no time bounds specified, use the simple endpoint
+    if start_ts is None or end_ts is None:
+        url = "https://clob.polymarket.com/prices-history"
+        params = {
+            "market": market_id,
+            "fidelity": fidelity
+        }
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("history", [])
+    
+    # For historical data, use chunked fetching with caching
+    return fetch_price_history_chunked(
+        market_id, start_ts, end_ts, fidelity, 
+        chunk_days=chunk_days, event_slug=event_slug, data_dir=data_dir
+    )
+
+def fetch_price_history_chunked(token_id, start_ts, end_ts, fidelity, chunk_days=15, event_slug=None, data_dir=None, force_refresh=False):
+    """
+    Fetch price history in chunks for a given token_id, time range, and fidelity.
+    Caches results in data_dir/event_slug/token_id.json if data_dir is provided.
+    Shows a tqdm progress bar for chunk downloads.
+    Prints full API response for debugging if not a list.
+    """
+    if data_dir is not None and event_slug is not None:
+        os.makedirs(data_dir, exist_ok=True)
+        cache_file = os.path.join(data_dir, f"{token_id}.json")
+        if os.path.exists(cache_file) and not force_refresh:
+            with open(cache_file, "r") as f:
+                return json.load(f)
+    all_prices = []
+    chunk_seconds = chunk_days * 24 * 3600
+    n_chunks = int((end_ts - start_ts) // chunk_seconds) + 1
+    current_start = start_ts
+    debugged = False
+    with tqdm(total=n_chunks, desc=f"Market {token_id[:8]}...", unit="chunk") as pbar:
+        while current_start < end_ts:
+            current_end = min(current_start + chunk_seconds, end_ts)
+            params = {
+                "market": token_id,
+                "startTs": current_start,
+                "endTs": current_end,
+                "fidelity": fidelity,
+            }
+            try:
+                resp = requests.get("https://clob.polymarket.com/prices-history", params=params)
+                resp.raise_for_status()
+                data = resp.json()
+                if isinstance(data, list):
+                    all_prices.extend(data)
+                else:
+                    print(f"\n[DEBUG] Unexpected data format for market {token_id}")
+                    print(f"  Params: {params}")
+                    print(f"  Response: {data}")
+                    if not debugged:
+                        print("\n[DEBUG] Stopping after first unexpected response for inspection.")
+                        debugged = True
+            except Exception as e:
+                print(f"Error fetching chunk {datetime.datetime.fromtimestamp(current_start, tz=datetime.timezone.utc)} to {datetime.datetime.fromtimestamp(current_end, tz=datetime.timezone.utc)} for market {token_id}: {e}")
+            current_start = current_end
+            pbar.update(1)
+    # Only save to cache if we got valid data
+    if data_dir is not None and event_slug is not None and all_prices:
+        with open(cache_file, "w") as f:
+            json.dump(all_prices, f)
+    return all_prices
 
 def get_trades(market_id):
     """
@@ -115,15 +188,19 @@ def fetch_market_token_mapping(event_url: str) -> dict:
 
     return mapping
 
-def fetch_and_merge_price_histories(token_mapping: dict, fidelity: int = 720):
+def fetch_and_merge_price_histories(token_mapping: dict, fidelity: int = 720, start_ts=None, end_ts=None, event_slug=None, data_dir=None):
     """
     Fetches and merges price histories for multiple markets into a single DataFrame, 
     aligning timestamps with an inner join to include only overlapping data points.
+    Supports chunked fetching with caching for historical data.
 
     Args:
-        token_mapping (dict): Maps market labels (str) to clobTokenIds (str).
-            e.g., {'Biden to win': '0x...', 'Trump to win': '0x...'}
-        fidelity (int, optional): Fidelity for the price history API. Defaults to 720.
+        token_mapping (dict): Maps market labels (str) to clobTokenIds (str)
+        fidelity (int): Fidelity for the price history API
+        start_ts (int, optional): Unix timestamp for start of data
+        end_ts (int, optional): Unix timestamp for end of data
+        event_slug (str, optional): Event slug for caching purposes
+        data_dir (str, optional): Directory to store the data files
 
     Returns:
         pd.DataFrame: A DataFrame with a DatetimeIndex, and columns for each
@@ -131,13 +208,19 @@ def fetch_and_merge_price_histories(token_mapping: dict, fidelity: int = 720):
     """
     dfs = []
     for label, token_id in token_mapping.items():
-        price_data = get_prices(token_id, fidelity)
-        hist = price_data.get("history", [])
-        if not hist:
+        price_data = get_prices(
+            token_id, fidelity, 
+            start_ts=start_ts, 
+            end_ts=end_ts,
+            event_slug=event_slug,
+            data_dir=data_dir
+        )
+        
+        if not price_data:
             print(f"Warning: no history for {label!r}, skipping.")
             continue
 
-        df = pd.DataFrame(hist)
+        df = pd.DataFrame(price_data)
         df["time"] = pd.to_datetime(df["t"], unit="s")
         df = df.set_index("time").rename(columns={"p": label}).drop(columns=["t"])
         dfs.append(df)
@@ -152,3 +235,17 @@ def fetch_and_merge_price_histories(token_mapping: dict, fidelity: int = 720):
     if df_merged.empty:
         raise RuntimeError("No overlapping timestamps between markets.")
     return df_merged
+
+def fetch_event_start_end_from_slug(slug: str) -> tuple:
+    """
+    Fetch the start and end date (ISO8601) for a given event slug from the Gamma API.
+    Returns (startDate, endDate) as ISO8601 strings.
+    """
+    api_url = f"https://gamma-api.polymarket.com/events?slug={slug}"
+    resp = requests.get(api_url)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data:
+        raise RuntimeError(f"No event found for slug '{slug}'")
+    first_event = data[0]
+    return first_event.get("startDate", []), first_event.get("endDate", [])

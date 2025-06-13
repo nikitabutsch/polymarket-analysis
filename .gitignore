@@ -133,4 +133,18 @@ dmypy.json
 cython_debug/
 
 # Our generated output
-output/ 
+output/
+
+# Data and outputs
+data/
+outputs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db 
