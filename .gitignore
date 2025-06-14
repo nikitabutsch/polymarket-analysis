@@ -138,6 +138,7 @@ output/
 # Data and outputs
 data/
 outputs/
+plots/
 
 # IDE
 .idea/

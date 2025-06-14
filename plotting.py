@@ -161,7 +161,7 @@ def plot_regimes(market_name: str, df_market_long: pd.DataFrame, df_regimes: pd.
                      label="Price", color="black", alpha=0.8, linewidth=2)
     ax1.set_ylabel("Price", color="black", fontsize=12)
     ax1.tick_params(axis='y', labelcolor="black")
-    ax1.set_title(market_name, fontsize=14, pad=20)
+    # Title will be set by suptitle instead to avoid overlap
 
     # Volatility plot (right y-axis)
     ax2 = ax1.twinx()
@@ -201,14 +201,14 @@ def plot_regimes(market_name: str, df_market_long: pd.DataFrame, df_regimes: pd.
         ax2.hlines(y=mean_vol, xmin=start_time, xmax=end_time, 
                   colors='#7A6B8A', linestyles='dashed', linewidth=2, alpha=0.6, zorder=1)
 
-        # Mean volatility annotation
-        mid_time = start_time + (end_time - start_time) / 2
-        ax2.text(
-            mid_time, mean_vol, f"μ = {mean_vol:.3f}",
-            ha="center", va="bottom",
-            bbox=dict(facecolor="white", alpha=0.9, edgecolor="gray", linewidth=0.8, pad=2),
-            fontsize=9, color='#333333'
-        )
+        # Mean volatility annotation - temporarily disabled to reduce clutter
+        # mid_time = start_time + (end_time - start_time) / 2
+        # ax2.text(
+        #     mid_time, mean_vol, f"μ = {mean_vol:.3f}",
+        #     ha="center", va="bottom",
+        #     bbox=dict(facecolor="white", alpha=0.9, edgecolor="gray", linewidth=0.8, pad=2),
+        #     fontsize=9, color='#333333'
+        # )
 
     # Add legend and formatting
     lines = line1 + line2
@@ -216,7 +216,7 @@ def plot_regimes(market_name: str, df_market_long: pd.DataFrame, df_regimes: pd.
     ax1.legend(lines, labels, loc='upper left', bbox_to_anchor=(0.02, 0.98))
     ax1.set_xlabel("Time", fontsize=12)
     ax1.grid(True, alpha=0.3)
-    plt.suptitle("Volatility Regimes (colors scaled locally)", y=0.95, fontsize=10)
+    plt.suptitle(f"{market_name} - Volatility Regimes", y=0.98, fontsize=14, weight='bold')
 
     # Save figure
     if not os.path.exists(save_dir):

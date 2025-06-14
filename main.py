@@ -13,8 +13,8 @@ import subprocess
 
 # --- Configuration ---
 EVENT_URLS = [
-    # "https://polymarket.com/event/presidential-election-winner-2024",  # USA
-    # "https://polymarket.com/event/will-erdogan-win-the-2023-turkish-presidential-election",  # Turkey
+    "https://polymarket.com/event/presidential-election-winner-2024",  # USA
+    "https://polymarket.com/event/will-erdogan-win-the-2023-turkish-presidential-election",  # Turkey
     # "https://polymarket.com/event/who-will-win-the-2022-french-presidential-election",  # France
     "https://polymarket.com/event/poland-presidential-election"  # Poland
 ]
@@ -68,7 +68,13 @@ def analyze_event(event_url: str):
         
     print("Loading and processing data...")
     print(f"CSV file size: {csv_file.stat().st_size / 1024 / 1024:.2f} MB")
-    df_long = analysis.prepare_data_for_analysis(csv_file)
+    
+    # Apply date filter for US election to focus on interesting period
+    start_date = "2024-06-01" if "presidential-election-winner-2024" in str(csv_file) else None
+    if start_date:
+        print(f"Applying date filter for US election: data from {start_date} onwards")
+    
+    df_long = analysis.prepare_data_for_analysis(csv_file, start_date=start_date)
     print(f"Loaded {len(df_long)} rows, {len(df_long['market'].unique())} unique markets")
     
     # Calculate regimes
@@ -103,7 +109,10 @@ def main():
             analyze_event(event_url)
         except Exception as e:
             print(f"\nError analyzing event {event_url}:")
-            print(f"{str(e)}\n")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error message: {str(e)}")
+            import traceback
+            print(f"Traceback:\n{traceback.format_exc()}")
             continue
 
 if __name__ == "__main__":

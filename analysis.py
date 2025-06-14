@@ -189,7 +189,7 @@ def find_convergence_regimes(
     first_nonzero: dict[str, Optional[int]],
     pen: int = 10,
     model: str = "l2",
-    batch_size: int = 2000,
+    batch_size: int = 10000,
 ) -> pd.DataFrame:
     """
     Partition each market's volatility into stable regimes using PELT with batch processing.
@@ -224,9 +224,32 @@ def find_convergence_regimes(
             continue
 
         series = sub["volatility"].values
-        # Detect breakpoints using PELT with an l2 cost function
-        algo = rpt.Pelt(model=model).fit(series)
-        breakpoints = algo.predict(pen=pen)
+        
+        # Apply batch processing for large datasets
+        if len(series) > batch_size:
+            print(f"  Processing {market} in batches ({len(series)} points, batch_size={batch_size})")
+            breakpoints = []
+            offset = 0
+            
+            for batch_start in range(0, len(series), batch_size):
+                batch_end = min(batch_start + batch_size, len(series))
+                batch_series = series[batch_start:batch_end]
+                
+                # Detect breakpoints in this batch
+                algo = rpt.Pelt(model=model).fit(batch_series)
+                batch_breakpoints = algo.predict(pen=pen)
+                
+                # Adjust breakpoints to global indices and add to list
+                adjusted_breakpoints = [bp + offset for bp in batch_breakpoints[:-1]]  # Exclude last point (end of batch)
+                breakpoints.extend(adjusted_breakpoints)
+                offset += len(batch_series)
+            
+            # Add final endpoint
+            breakpoints.append(len(series))
+        else:
+            # Standard processing for smaller datasets
+            algo = rpt.Pelt(model=model).fit(series)
+            breakpoints = algo.predict(pen=pen)
 
         # Convert breakpoints to regimes
         start_idx = 0
@@ -457,7 +480,7 @@ def filter_top_candidates(df_long: pd.DataFrame, top_k: int = 5, min_prob_thresh
     
     return df_filtered
 
-def prepare_data_for_analysis(csv_file: str, use_top_k_filter: bool = True) -> pd.DataFrame:
+def prepare_data_for_analysis(csv_file: str, use_top_k_filter: bool = True, start_date: str = None) -> pd.DataFrame:
     """
     Load and prepare data from CSV for analysis.
     
@@ -466,6 +489,7 @@ def prepare_data_for_analysis(csv_file: str, use_top_k_filter: bool = True) -> p
     Args:
         csv_file: Path to the CSV file
         use_top_k_filter: Whether to apply top-K filtering for large datasets
+        start_date: Optional start date filter (e.g., '2024-06-01'). Only data after this date will be used.
         
     Returns:
         Prepared long-format DataFrame ready for analysis
@@ -490,6 +514,13 @@ def prepare_data_for_analysis(csv_file: str, use_top_k_filter: bool = True) -> p
             df_long = df[['time', 'market', 'p_t']].copy()
         else:
             raise ValueError(f"Unexpected CSV format. Columns: {list(df.columns)}")
+    
+    # Apply date filtering if specified
+    if start_date:
+        start_datetime = pd.to_datetime(start_date, utc=True)  # Make timezone-aware for compatibility
+        initial_count = len(df_long)
+        df_long = df_long[df_long['time'] >= start_datetime].copy()
+        print(f"Date filter applied (>= {start_date}): {initial_count} → {len(df_long)} data points")
     
     # Apply top-K filtering for large datasets
     if use_top_k_filter and len(df_long['market'].unique()) > 6:
@@ -531,7 +562,7 @@ def calculate_regimes(df_long: pd.DataFrame, window_size_str: str, penalty: floa
     
     # Find convergence regimes with batch processing
     df_regimes = find_convergence_regimes(
-        df_long, first_nonzero, pen=penalty, model="l2", batch_size=2000
+        df_long, first_nonzero, pen=penalty, model="l2", batch_size=10000
     )
     
     return df_regimes
