@@ -566,3 +566,82 @@ def calculate_regimes(df_long: pd.DataFrame, window_size_str: str, penalty: floa
     )
     
     return df_regimes
+
+def calculate_regime_contexts(df_long: pd.DataFrame, df_regimes: pd.DataFrame) -> pd.DataFrame:
+    """
+    Analyze regime contexts by calculating average price during each regime period
+    and categorizing regimes based on market sentiment.
+    
+    Args:
+        df_long: Long-format DataFrame with time, market, price, and volatility data
+        df_regimes: DataFrame with regime information including start_time, end_time, mean_volatility
+        
+    Returns:
+        DataFrame with regime context analysis including price buckets and volatility by context
+    """
+    regime_contexts = []
+    
+    for _, regime in df_regimes.iterrows():
+        market = regime['market']
+        start_time = regime['start_time']
+        end_time = regime['end_time']
+        mean_volatility = regime['mean_volatility']
+        
+        # Get market data for this regime period
+        market_data = df_long[
+            (df_long['market'] == market) &
+            (df_long['time'] >= start_time) &
+            (df_long['time'] <= end_time)
+        ]
+        
+        if len(market_data) == 0:
+            continue
+            
+        # Calculate average price during this regime
+        price_col = "p_t" if "p_t" in market_data.columns else "price"
+        avg_price = market_data[price_col].mean()
+        
+        # Categorize regime based on price context
+        if avg_price >= 0.65:
+            context = "High-Confidence"  # Strong favorite
+        elif avg_price >= 0.35:
+            context = "Contested"  # Tight race
+        else:
+            context = "Long-shot"  # Underdog
+            
+        regime_contexts.append({
+            'market': market,
+            'start_time': start_time,
+            'end_time': end_time,
+            'mean_volatility': mean_volatility,
+            'avg_price': avg_price,
+            'context': context,
+            'regime_duration': (end_time - start_time).total_seconds() / 3600  # Duration in hours
+        })
+    
+    return pd.DataFrame(regime_contexts)
+
+def aggregate_volatility_by_context(df_regime_contexts: pd.DataFrame) -> pd.DataFrame:
+    """
+    Aggregate volatility statistics by market and context.
+    
+    Args:
+        df_regime_contexts: DataFrame from calculate_regime_contexts
+        
+    Returns:
+        DataFrame with aggregated volatility by market and context
+    """
+    # Group by market and context, calculate mean volatility
+    context_summary = df_regime_contexts.groupby(['market', 'context']).agg({
+        'mean_volatility': ['mean', 'std', 'count'],
+        'regime_duration': 'sum',  # Total time spent in this context
+        'avg_price': 'mean'  # Average price across all regimes in this context
+    }).reset_index()
+    
+    # Flatten column names
+    context_summary.columns = [
+        'market', 'context', 'volatility_mean', 'volatility_std', 'regime_count',
+        'total_duration_hours', 'avg_price_in_context'
+    ]
+    
+    return context_summary
