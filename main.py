@@ -4,7 +4,7 @@ Main script for analyzing multiple election markets from Polymarket.
 
 import polymarket_api as api
 import analysis
-from plotting import plot_regimes, plot_total_uncertainty_bar_chart, plot_volatility_by_context
+from plotting import plot_regimes, plot_total_uncertainty_bar_chart, plot_volatility_by_context, plot_frontrunner_vs_uncertainty_scatter, plot_half_life_comparison
 import numpy as np
 import warnings
 import os
@@ -139,14 +139,23 @@ def analyze_event(event_url: str):
         print("Generating Volatility by Context bar chart...")
         plot_volatility_by_context(df_context_summary, election_name=election_name, save_dir=str(plots_dir),
                                   selected_candidates=selected_candidates)
+    
+    # Return data for cross-election analysis
+    return (election_name, df_long, df_auc)
 
 def main():
     """
     Main function to run the Polymarket analysis pipeline for multiple events.
     """
+    # Store data from all elections for cross-election analysis
+    all_elections_data = []
+    
     for event_url in EVENT_URLS:
         try:
-            analyze_event(event_url)
+            # Store the result for cross-election analysis
+            result = analyze_event(event_url)
+            if result:
+                all_elections_data.append(result)
         except Exception as e:
             print(f"\nError analyzing event {event_url}:")
             print(f"Error type: {type(e).__name__}")
@@ -154,6 +163,21 @@ def main():
             import traceback
             print(f"Traceback:\n{traceback.format_exc()}")
             continue
+    
+    # Generate cross-election scatter plot
+    if all_elections_data:
+        print(f"\n{'='*80}")
+        print("Generating Cross-Election Analysis: Front-Runner vs. Uncertainty")
+        print(f"{'='*80}\n")
+        
+        df_scatter = analysis.calculate_frontrunner_vs_uncertainty(all_elections_data)
+        plots_dir = Path("plots")
+        plots_dir.mkdir(parents=True, exist_ok=True)
+        plot_frontrunner_vs_uncertainty_scatter(df_scatter, save_dir=str(plots_dir))
+        
+        # Generate Half-Life Comparison chart
+        print("Generating Half-Life Comparison chart...")
+        plot_half_life_comparison(all_elections_data, save_dir=str(plots_dir))
 
 if __name__ == "__main__":
     # The 'trapz' function used in analysis.py is deprecated. This suppresses the warning.

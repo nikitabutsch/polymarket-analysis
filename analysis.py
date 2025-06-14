@@ -441,11 +441,29 @@ def calculate_auc(df_long, first_nonzero):
         
         if len(sub) < 2:
             auc = None
+            normalized_auc = None
+            time_span = None
         else:
-            # Use np.trapz for numerical integration.
-            auc = np.trapz(y=sub["volatility"], x=sub["i"])
+            # Convert time to numerical values (days since start) for integration
+            time_start = sub["time"].min()
+            time_numeric = (sub["time"] - time_start).dt.total_seconds() / (24 * 3600)  # days
             
-        auc_rows.append({"market": market, "AUC": auc})
+            # Use np.trapz for numerical integration with respect to time
+            auc = np.trapz(y=sub["volatility"], x=time_numeric)
+            
+            # Time span calculation
+            time_span = (sub["time"].max() - sub["time"].min()).total_seconds() / (24 * 3600)  # days
+            
+            # For normalized AUC, the AUC is already "per day" since we integrated over time
+            # But we can also calculate average volatility for comparison
+            normalized_auc = auc / max(time_span, 1)  # Average volatility over the period
+            
+        auc_rows.append({
+            "market": market, 
+            "AUC": auc,
+            "AUC_normalized": normalized_auc,
+            "time_span_days": time_span if len(sub) >= 2 else None
+        })
     return pd.DataFrame(auc_rows).sort_values("AUC")
 
 def filter_top_candidates(df_long: pd.DataFrame, top_k: int = 5, min_prob_threshold: float = 0.05) -> pd.DataFrame:
@@ -645,3 +663,56 @@ def aggregate_volatility_by_context(df_regime_contexts: pd.DataFrame) -> pd.Data
     ]
     
     return context_summary
+
+def calculate_frontrunner_vs_uncertainty(all_elections_data: list) -> pd.DataFrame:
+    """
+    Calculate front-runner status vs total uncertainty data across all elections.
+    
+    Args:
+        all_elections_data: List of tuples (election_name, df_long, df_auc)
+        
+    Returns:
+        DataFrame with candidate, election, max_price, total_uncertainty columns
+    """
+    scatter_data = []
+    
+    for election_name, df_long, df_auc in all_elections_data:
+        # Calculate max price for each candidate in this election
+        price_col = "p_t" if "p_t" in df_long.columns else "price" 
+        max_prices = df_long.groupby('market')[price_col].max()
+        
+        # Merge with AUC data
+        df_auc_clean = df_auc.dropna(subset=['AUC_normalized'])
+        
+        for _, row in df_auc_clean.iterrows():
+            candidate = row['market']
+            # Use normalized AUC for fair cross-election comparison
+            total_uncertainty = row['AUC_normalized'] if pd.notna(row['AUC_normalized']) else row['AUC']
+            max_price = max_prices.get(candidate, 0)
+            
+            # Clean candidate name for display
+            def clean_candidate_name(name):
+                if "Will " in name:
+                    start = name.find("Will ") + 5
+                    if " be the" in name:
+                        end = name.find(" be the")
+                    elif " win the" in name:
+                        end = name.find(" win the")
+                    else:
+                        end = len(name)
+                    
+                    if start < end:
+                        return name[start:end]
+                return name.replace('_', ' ').title()
+            
+            clean_name = clean_candidate_name(candidate)
+            
+            scatter_data.append({
+                'candidate': candidate,
+                'candidate_clean': clean_name,
+                'election': election_name,
+                'max_price': max_price,
+                'total_uncertainty': total_uncertainty
+            })
+    
+    return pd.DataFrame(scatter_data)

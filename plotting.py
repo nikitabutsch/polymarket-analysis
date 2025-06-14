@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.cm as cm
 import matplotlib
 import os
+import analysis
 
 def plot_price_histories(df_merged):
     """
@@ -507,3 +508,303 @@ def plot_volatility_by_context(df_context_summary: pd.DataFrame, election_name: 
         if contested_vol > 0 and confident_vol > 0:
             ratio = contested_vol / confident_vol
             print(f"  {'Volatility Ratio':<15}: {ratio:.2f}x (Contested/High-Confidence)") 
+
+def plot_frontrunner_vs_uncertainty_scatter(df_scatter: pd.DataFrame, save_dir: str = "output"):
+    """
+    Creates a scatter plot showing the relationship between front-runner status 
+    (maximum price achieved) and total market uncertainty (AUC of volatility).
+    
+    Args:
+        df_scatter (pd.DataFrame): DataFrame with candidate, election, max_price, total_uncertainty columns
+        save_dir (str): Directory to save the plot
+    """
+    if df_scatter.empty:
+        print("No scatter plot data available")
+        return
+    
+    # Create the scatter plot
+    fig, ax = plt.subplots(figsize=(12, 8))
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+    
+    # Define colors for different elections
+    election_colors = {
+        'Presidential Election Winner 2024': '#2563EB',  # Blue
+        'Poland Presidential Election': '#DC2626',        # Red  
+        'Will Erdogan Win The 2023 Turkish Presidential Election': '#059669'  # Green
+    }
+    
+    # Create scatter plot points
+    for election in df_scatter['election'].unique():
+        election_data = df_scatter[df_scatter['election'] == election]
+        color = election_colors.get(election, '#6B7280')  # Gray fallback
+        
+        ax.scatter(election_data['max_price'], election_data['total_uncertainty'], 
+                  color=color, alpha=0.8, s=120, edgecolor='white', linewidth=2,
+                  label=election)
+    
+    # Add candidate labels
+    for _, row in df_scatter.iterrows():
+        ax.annotate(row['candidate_clean'], 
+                   (row['max_price'], row['total_uncertainty']),
+                   xytext=(5, 5), textcoords='offset points',
+                   fontsize=12, color='#2C2C2C', weight='500',
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='white', 
+                            alpha=0.8, edgecolor='#CCCCCC', linewidth=1))
+    
+    # Add trend line
+    if len(df_scatter) > 1:
+        z = np.polyfit(df_scatter['max_price'], df_scatter['total_uncertainty'], 1)
+        p = np.poly1d(z)
+        x_trend = np.linspace(df_scatter['max_price'].min(), df_scatter['max_price'].max(), 100)
+        ax.plot(x_trend, p(x_trend), '--', color='#6B7280', alpha=0.7, linewidth=2)
+        
+        # Calculate correlation coefficient
+        correlation = np.corrcoef(df_scatter['max_price'], df_scatter['total_uncertainty'])[0, 1]
+        ax.text(0.72, 0.15, f'Correlation: {correlation:.3f}', 
+                transform=ax.transAxes, fontsize=14, weight='600',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
+                         alpha=0.95, edgecolor='#CCCCCC', linewidth=1))
+    
+    # Customize the chart with larger fonts
+    ax.set_xlabel('Maximum Price Achieved (Front-Runner Status)', fontsize=18, 
+                  color='#2C2C2C', weight='600')
+    ax.set_ylabel('Normalized Market Uncertainty (AUC per day)', fontsize=18, 
+                  color='#2C2C2C', weight='600')
+    ax.set_title('Front-Runner Status vs. Normalized Market Uncertainty', 
+                 fontsize=20, weight='600', color='#2C2C2C', pad=30)
+    
+    # Format axes
+    ax.set_xlim(0, 1)
+    ax.set_ylim(bottom=0)
+    ax.tick_params(colors='#444444', which='both', labelsize=14)
+    
+    # Clean up appearance
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#CCCCCC')
+    ax.spines['bottom'].set_color('#CCCCCC')
+    
+    # Add grid
+    ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.8, color='#E8E8E8')
+    ax.set_axisbelow(True)
+    
+    # Legend - positioned to avoid data points
+    legend = ax.legend(loc='upper left', bbox_to_anchor=(0.02, 0.98), 
+                      frameon=True, facecolor='white', edgecolor='#CCCCCC', 
+                      fontsize=14)
+    legend.get_frame().set_alpha(0.95)
+    legend.get_frame().set_linewidth(1.5)
+    
+    # Add explanation
+    explanation = ("Each point represents a candidate. X-axis shows their peak market confidence, " +
+                  "Y-axis shows normalized volatility (uncertainty per day) for fair cross-election comparison.")
+    fig.text(0.5, 0.02, explanation, ha='center', fontsize=13, 
+             style='italic', color='#555555', weight='500')
+    
+    # Adjust layout
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.15, top=0.9, left=0.12, right=0.95)
+    
+    # Save figure
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    plt.savefig(f"{save_dir}/frontrunner_vs_uncertainty_scatter.png", 
+                dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+    plt.close(fig)
+    
+    # Print insights
+    print(f"\nFront-Runner vs. Uncertainty Analysis:")
+    print("=" * 50)
+    print(f"Total candidates analyzed: {len(df_scatter)}")
+    
+    if len(df_scatter) > 1:
+        correlation = np.corrcoef(df_scatter['max_price'], df_scatter['total_uncertainty'])[0, 1]
+        print(f"Correlation coefficient: {correlation:.3f}")
+        
+        if correlation > 0.3:
+            print("→ Strong positive correlation: Higher front-runner status tends to coincide with more market uncertainty")
+        elif correlation < -0.3:
+            print("→ Strong negative correlation: Higher front-runner status tends to coincide with less market uncertainty")  
+        else:
+            print("→ Weak correlation: Front-runner status and market uncertainty are not strongly related")
+    
+    print(f"\nTop 3 Front-Runners (by max price):")
+    top_frontrunners = df_scatter.nlargest(3, 'max_price')
+    for _, row in top_frontrunners.iterrows():
+        print(f"  {row['candidate_clean']:<20} Max: {row['max_price']:.3f}, Uncertainty: {row['total_uncertainty']:.3f}")
+    
+    print(f"\nTop 3 Most Uncertain Markets (by normalized AUC):")
+    top_uncertain = df_scatter.nlargest(3, 'total_uncertainty')
+    for _, row in top_uncertain.iterrows():
+        print(f"  {row['candidate_clean']:<20} Max: {row['max_price']:.3f}, Norm. Uncertainty: {row['total_uncertainty']:.3f}") 
+
+def plot_half_life_comparison(all_elections_data: list, save_dir: str = "output"):
+    """
+    Creates a bar chart comparing half-life (convergence speed) across candidates.
+    Shows how quickly each candidate's market converges after volatility shocks.
+    
+    Args:
+        all_elections_data: List of tuples (election_name, df_long, df_auc)
+        save_dir (str): Directory to save the plot
+    """
+    
+    # Collect half-life data from all elections
+    half_life_data = []
+    
+    for election_name, df_long, df_auc in all_elections_data:
+        # Calculate half-life for this election
+        first_nonzero = analysis.get_first_nonzero_volatility(df_long)
+        df_half_life = analysis.calculate_half_life(df_long, first_nonzero)
+        
+        for _, row in df_half_life.iterrows():
+            if pd.notna(row['i_half']) and row['i_half'] is not None:
+                # Convert i_half to time duration
+                market = row['market']
+                i_half = int(row['i_half'])
+                time_half = row['time_half']
+                
+                # Get the initial time for this market
+                market_data = df_long[df_long['market'] == market].sort_values('time')
+                if len(market_data) > 0:
+                    initial_time = market_data['time'].iloc[0]
+                    half_life_hours = (time_half - initial_time).total_seconds() / 3600
+                    
+                    # Clean candidate name
+                    def clean_candidate_name(name):
+                        if "Will " in name:
+                            start = name.find("Will ") + 5
+                            if " be the" in name:
+                                end = name.find(" be the")
+                            elif " win the" in name:
+                                end = name.find(" win the")
+                            else:
+                                end = len(name)
+                            if start < end:
+                                return name[start:end]
+                        return name.replace('_', ' ').title()
+                    
+                    half_life_data.append({
+                        'candidate': market,
+                        'candidate_clean': clean_candidate_name(market),
+                        'election': election_name,
+                        'half_life_hours': half_life_hours,
+                        'half_life_days': half_life_hours / 24,
+                        'initial_volatility': row['initial_delta']
+                    })
+    
+    if not half_life_data:
+        print("No half-life data available for plotting")
+        return
+        
+    df_half_life = pd.DataFrame(half_life_data)
+    
+    # Filter out irrelevant candidates manually
+    candidates_to_exclude = ['Gavin Newsom']
+    df_half_life = df_half_life[~df_half_life['candidate_clean'].isin(candidates_to_exclude)]
+    
+    if df_half_life.empty:
+        print("No relevant half-life data after filtering")
+        return
+    
+    # Create the bar chart
+    fig, ax = plt.subplots(figsize=(12, 8))
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+    
+    # Define colors for different elections
+    election_colors = {
+        'Presidential Election Winner 2024': '#2563EB',  # Blue
+        'Poland Presidential Election': '#DC2626',        # Red  
+        'Will Erdogan Win The 2023 Turkish Presidential Election': '#059669'  # Green
+    }
+    
+    # Sort by half-life for better visualization
+    df_half_life = df_half_life.sort_values('half_life_days')
+    
+    # Create bars
+    bars = []
+    colors = []
+    for _, row in df_half_life.iterrows():
+        color = election_colors.get(row['election'], '#6B7280')
+        colors.append(color)
+    
+    y_pos = np.arange(len(df_half_life))
+    bars = ax.barh(y_pos, df_half_life['half_life_days'], 
+                   color=colors, alpha=0.8, edgecolor='white', linewidth=2)
+    
+    # Customize the chart
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(df_half_life['candidate_clean'], fontsize=13, weight='500')
+    ax.set_xlabel('Half-Life (days to 50% convergence)', fontsize=16, 
+                  color='#2C2C2C', weight='600')
+    ax.set_title('Market Convergence Speed: Half-Life After Volatility Shocks', 
+                 fontsize=18, weight='600', color='#2C2C2C', pad=25)
+    
+    # Clean up appearance
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#CCCCCC')
+    ax.spines['bottom'].set_color('#CCCCCC')
+    ax.tick_params(colors='#444444', which='both', labelsize=12)
+    
+    # Add grid
+    ax.grid(True, axis='x', alpha=0.3, linestyle='-', linewidth=0.8, color='#E8E8E8')
+    ax.set_axisbelow(True)
+    
+    # Add value labels
+    for i, (bar, days) in enumerate(zip(bars, df_half_life['half_life_days'])):
+        width = bar.get_width()
+        ax.text(width + width*0.02, bar.get_y() + bar.get_height()/2,
+                f'{days:.1f}d', ha='left', va='center', 
+                fontsize=11, weight='600', color='#2C2C2C')
+    
+    # Create custom legend for elections
+    legend_elements = []
+    for election, color in election_colors.items():
+        if election in df_half_life['election'].values:
+            legend_elements.append(plt.Rectangle((0,0),1,1, facecolor=color, alpha=0.8, 
+                                               label=election.replace('Will Erdogan Win The 2023 Turkish Presidential Election', 
+                                                                    'Turkey Election')))
+    
+    legend = ax.legend(handles=legend_elements, loc='lower right', 
+                      bbox_to_anchor=(0.98, 0.02), frameon=True, 
+                      facecolor='white', edgecolor='#CCCCCC', fontsize=12)
+    legend.get_frame().set_alpha(0.95)
+    legend.get_frame().set_linewidth(1.5)
+    
+    # Add explanation
+    explanation = ("Shorter bars = faster convergence after market shocks. Shows how quickly uncertainty resolves.")
+    fig.text(0.5, 0.02, explanation, ha='center', fontsize=12, 
+             style='italic', color='#555555', weight='500')
+    
+    # Adjust layout
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.15, top=0.9, left=0.25, right=0.95)
+    
+    # Save figure
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    plt.savefig(f"{save_dir}/half_life_comparison.png", 
+                dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
+    plt.close(fig)
+    
+    # Print insights
+    print(f"\nHalf-Life Analysis (Convergence Speed):")
+    print("=" * 50)
+    print("Half-life = time for volatility to drop to 50% of initial shock")
+    print()
+    
+    fastest = df_half_life.iloc[0]
+    slowest = df_half_life.iloc[-1]
+    
+    print(f"Fastest Convergence:")
+    print(f"  {fastest['candidate_clean']:<20} {fastest['half_life_days']:.1f} days")
+    print(f"Slowest Convergence:")  
+    print(f"  {slowest['candidate_clean']:<20} {slowest['half_life_days']:.1f} days")
+    print()
+    print("All Candidates (fastest to slowest):")
+    for _, row in df_half_life.iterrows():
+        print(f"  {row['candidate_clean']:<20} {row['half_life_days']:.1f} days") 
