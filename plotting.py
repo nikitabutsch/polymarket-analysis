@@ -23,7 +23,7 @@ def plot_price_histories(df_merged):
     
     # Improve date formatting
     fig.autofmt_xdate(rotation=45)
-    plt.tight_layout(rect=[0, 0, 0.85, 1]) # Adjust layout to make space for legend
+    plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust layout to make space for legend
     plt.show()
 
 def plot_rolling_belief_spread(df_long, window):
@@ -47,7 +47,7 @@ def plot_rolling_belief_spread(df_long, window):
 
     # Improve date formatting
     fig.autofmt_xdate(rotation=45)
-    plt.tight_layout(rect=[0, 0, 0.85, 1]) # Adjust layout
+    plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust layout
     plt.show()
 
 def plot_annotated_rolling_belief_spread(df_long, window, df_thresh, df_half, df_decay):
@@ -126,80 +126,102 @@ def plot_annotated_rolling_belief_spread(df_long, window, df_thresh, df_half, df
     ax.legend(by_label.values(), by_label.keys(), fontsize="small", ncol=2, bbox_to_anchor=(1.02, 1), loc="upper left")
 
     plt.grid(True, linestyle="--", alpha=0.3)
-    plt.tight_layout(rect=[0, 0, 0.85, 1]) # Adjust layout
+    plt.tight_layout(rect=[0, 0, 0.85, 1])  # Adjust layout
     plt.show()
 
-def plot_regimes(market_name: str, df_market_long: pd.DataFrame, df_regimes: pd.DataFrame):
+def plot_regimes(market_name: str, df_market_long: pd.DataFrame, df_regimes: pd.DataFrame, save_dir: str = "output"):
     """
-    Generates and saves a plot visualizing the volatility regimes for a single market.
+    Generates and saves a dual y-axis plot visualizing volatility regimes for a single market.
 
-    This function creates a comprehensive plot with several layers:
-    1.  The rolling volatility of the market's price is plotted as a line graph.
-    2.  Each detected volatility regime is shown as a colored vertical span, with
-        the color indicating its relative volatility (green for low, red for high).
-    3.  The mean volatility (μ) for each regime is annotated on the plot.
-    4.  A subtitle clarifies that the colors are scaled locally for each market.
-
-    The resulting plot is saved to the 'output/' directory.
+    The plot displays:
+    - Price history (left y-axis, black line)
+    - Rolling volatility (right y-axis, purple line)
+    - Colored regime backgrounds (RdYlGn_r: green=low, red=high volatility)
+    - Horizontal dashed lines showing mean volatility per regime
+    - Numerical annotations of mean volatility values
 
     Args:
-        market_name (str): The name of the market being plotted.
-        df_market_long (pd.DataFrame): The long-format data for the specific market,
-            containing 'time' and 'volatility' columns.
-        df_regimes (pd.DataFrame): The regime data for the market, containing
-            'start_time', 'end_time', and 'mean_volatility'.
+        market_name (str): Name of the market being plotted
+        df_market_long (pd.DataFrame): Long-format DataFrame containing 'time', 
+            price column ('p_t' or 'price'), and 'volatility' columns
+        df_regimes (pd.DataFrame): Regime data containing 'start_time', 
+            'end_time', and 'mean_volatility' columns
+        save_dir (str): Directory to save the plot. Defaults to "output"
     """
     if df_regimes.empty:
         print(f"No regimes to plot for market: {market_name}")
         return
 
-    fig, ax = plt.subplots(figsize=(16, 6))
+    # Create figure with dual y-axes and wide aspect ratio
+    fig, ax1 = plt.subplots(figsize=(16, 6))
 
-    # Plot the volatility series
-    ax.plot(df_market_long["time"], df_market_long["volatility"], label="Rolling Volatility", color="black", alpha=0.8)
+    # Price plot (left y-axis)
+    price_col = "p_t" if "p_t" in df_market_long.columns else "price"
+    line1 = ax1.plot(df_market_long["time"], df_market_long[price_col], 
+                     label="Price", color="black", alpha=0.8, linewidth=2)
+    ax1.set_ylabel("Price", color="black", fontsize=12)
+    ax1.tick_params(axis='y', labelcolor="black")
+    ax1.set_title(market_name, fontsize=14, pad=20)
 
-    # --- Local Scaling for Colors ---
-    min_mean_vol = df_regimes["mean_volatility"].min()
-    max_mean_vol = df_regimes["mean_volatility"].max()
-    vol_range = max_mean_vol - min_mean_vol
+    # Volatility plot (right y-axis)
+    ax2 = ax1.twinx()
+    line2 = ax2.plot(df_market_long["time"], df_market_long["volatility"], 
+                     label="Volatility", color="#5D4E75", alpha=0.8, linewidth=1.5)
+    ax2.set_ylabel("Volatility", color="#5D4E75", fontsize=11)
+    ax2.tick_params(axis='y', labelcolor="#5D4E75")
 
-    # Overlay the regimes as shaded regions
+    # Normalize volatility values for color mapping
+    all_mean_vols = df_regimes["mean_volatility"].values
+    if len(all_mean_vols) > 1:
+        vol_min, vol_max = all_mean_vols.min(), all_mean_vols.max()
+    else:
+        vol_min, vol_max = 0, all_mean_vols[0] if len(all_mean_vols) > 0 else 1
+    
+    # Use RdYlGn_r colormap (green=low, red=high volatility)
+    cmap = cm.get_cmap('RdYlGn_r')
+    
+    # Draw regime backgrounds and annotations
     for _, regime in df_regimes.iterrows():
-        # Normalize the mean volatility locally to show relative changes clearly
-        if vol_range > 1e-6:
-            norm_vol = (regime["mean_volatility"] - min_mean_vol) / vol_range
+        start_time = regime["start_time"]
+        end_time = regime["end_time"]
+        mean_vol = regime["mean_volatility"]
+
+        # Normalize volatility for color mapping
+        if vol_max > vol_min:
+            normalized_vol = (mean_vol - vol_min) / (vol_max - vol_min)
         else:
-            norm_vol = 0.5  # Neutral color if all regimes have same avg volatility
+            normalized_vol = 0.5
+        
+        regime_color = cmap(normalized_vol)
+        
+        # Colored background
+        ax1.axvspan(start_time, end_time, alpha=0.3, color=regime_color, zorder=0)
 
-        cmap = matplotlib.colormaps.get_cmap("RdYlGn_r")
-        color = cmap(norm_vol)
-        ax.axvspan(regime["start_time"], regime["end_time"], color=color, alpha=0.3)
+        # Horizontal dashed line at mean volatility level
+        ax2.hlines(y=mean_vol, xmin=start_time, xmax=end_time, 
+                  colors='#7A6B8A', linestyles='dashed', linewidth=2, alpha=0.6, zorder=1)
 
-        # Annotate the mean volatility (μ) for the regime
-        text_x = regime["start_time"] + (regime["end_time"] - regime["start_time"]) / 2
-        ax.text(
-            text_x,
-            ax.get_ylim()[1] * 0.95,
-            "μ={:.3f}".format(regime["mean_volatility"]),
-            verticalalignment="top",
-            ha="center",
-            fontsize=9,
+        # Mean volatility annotation
+        mid_time = start_time + (end_time - start_time) / 2
+        ax2.text(
+            mid_time, mean_vol, f"μ = {mean_vol:.3f}",
+            ha="center", va="bottom",
+            bbox=dict(facecolor="white", alpha=0.9, edgecolor="gray", linewidth=0.8, pad=2),
+            fontsize=9, color='#333333'
         )
 
-    ax.set_title(f"Volatility Regimes for: {market_name}", fontsize=14)
-    fig.suptitle("Colors are scaled locally to show relative changes. Compare absolute volatility using the μ values.", fontsize=10, y=0.92)
+    # Add legend and formatting
+    lines = line1 + line2
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc='upper left', bbox_to_anchor=(0.02, 0.98))
+    ax1.set_xlabel("Time", fontsize=12)
+    ax1.grid(True, alpha=0.3)
+    plt.suptitle("Volatility Regimes (colors scaled locally)", y=0.95, fontsize=10)
 
-    ax.set_ylabel("Rolling Volatility (Price Std Dev)")
-    ax.set_xlabel("Time")
-    ax.legend(loc="center left")
-    ax.grid(True, which="both", linestyle="--", linewidth=0.5)
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-
-    # --- Save Figure ---
-    # Ensure output directory exists
-    if not os.path.exists("output"):
-        os.makedirs("output")
+    # Save figure
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
         
     safe_market_name = "".join(c for c in market_name if c.isalnum() or c in (" ", "_")).rstrip()
-    plt.savefig(f"output/regimes_{safe_market_name}.png", dpi=300)
+    plt.savefig(f"{save_dir}/regimes_{safe_market_name}.png", dpi=300)
     plt.close(fig) 

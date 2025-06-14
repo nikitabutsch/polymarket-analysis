@@ -13,8 +13,8 @@ Usage:
     python fetch_market_data.py --event-slug "event-slug" [--fidelity 60] [--chunk-days 15]
 
 Arguments:
-    --event-slug: The slug of the event to fetch data for (required)
-    --fidelity: Time interval between data points in seconds (default: 60)
+    --event-slug: The slug of the event to fetch data for (required, e.g. "presidential-election-winner-2024")
+    --fidelity: Time interval between data points in minutes (default: 60)
     --chunk-days: Number of days to fetch in each chunk (default: 15)
 
 Output:
@@ -186,3 +186,4 @@ def main():
 
 if __name__ == "__main__":
     main() 
+    

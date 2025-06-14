@@ -2,7 +2,8 @@ import pandas as pd
 import numpy as np
 import statsmodels.api as sm
 import ruptures as rpt
-from typing import Optional
+from typing import Optional, List, Tuple
+from scipy import stats
 
 def prepare_long_dataframe(df_prices):
     """
@@ -188,19 +189,14 @@ def find_convergence_regimes(
     first_nonzero: dict[str, Optional[int]],
     pen: int = 10,
     model: str = "l2",
+    batch_size: int = 2000,
 ) -> pd.DataFrame:
     """
-    Partition each market's volatility into stable regimes using PELT.
+    Partition each market's volatility into stable regimes using PELT with batch processing.
 
     Uses the PELT (Pruned Exact Linear Time) algorithm to detect change points
-    in the `volatility` signal. This method is effective at finding shifts in a
-    signal's mean, making it ideal for identifying transitions between periods
-    of high and low price volatility.
-
-    The process identifies breakpoints in the time series, which are then used
-    to define distinct, contiguous regimes. For each regime, it calculates key
-    statistics like the mean and standard deviation of volatility, as well as
-    the duration.
+    in the `volatility` signal. For large datasets, processes data in batches
+    to maintain performance while preserving full temporal resolution.
 
     Args:
         df_long (pd.DataFrame): Long-format DataFrame with 'market', 'i',
@@ -209,8 +205,8 @@ def find_convergence_regimes(
             `volatility` > 0, to ignore pre-activity data.
         pen (float): Penalty parameter to control the sensitivity of the
             change point detection. A higher penalty results in fewer regimes.
-        model (str): The cost function for the PELT algorithm. "l2" is used
-            for finding changes in the mean of the signal.
+        model (str): The cost function for the PELT algorithm.
+        batch_size (int): Maximum number of data points to process in each batch.
 
     Returns:
         pd.DataFrame: A DataFrame where each row represents a detected regime,
@@ -428,3 +424,114 @@ def calculate_auc(df_long, first_nonzero):
             
         auc_rows.append({"market": market, "AUC": auc})
     return pd.DataFrame(auc_rows).sort_values("AUC")
+
+def filter_top_candidates(df_long: pd.DataFrame, top_k: int = 5, min_prob_threshold: float = 0.05) -> pd.DataFrame:
+    """
+    Filter to keep only the top-K candidates with highest maximum probability.
+    
+    This reduces the dataset size significantly while focusing on the most relevant candidates.
+    
+    Args:
+        df_long: Long-format DataFrame with market data
+        top_k: Number of top candidates to keep
+        min_prob_threshold: Minimum probability threshold (candidates must exceed this at some point)
+        
+    Returns:
+        Filtered DataFrame with only top-K candidates
+    """
+    # Calculate max probability for each candidate
+    max_probs = df_long.groupby('market')['p_t'].max()
+    
+    # Filter candidates that exceed the minimum threshold
+    eligible_candidates = max_probs[max_probs >= min_prob_threshold]
+    
+    # Get top-K candidates by max probability
+    top_candidates = eligible_candidates.nlargest(top_k).index.tolist()
+    
+    print(f"Filtering to top {len(top_candidates)} candidates from {len(max_probs)} total:")
+    for candidate in top_candidates:
+        print(f"  - {candidate}: max prob = {max_probs[candidate]:.3f}")
+    
+    # Filter the DataFrame
+    df_filtered = df_long[df_long['market'].isin(top_candidates)].copy()
+    
+    return df_filtered
+
+def prepare_data_for_analysis(csv_file: str, use_top_k_filter: bool = True) -> pd.DataFrame:
+    """
+    Load and prepare data from CSV for analysis.
+    
+    Handles different CSV formats (either 't,p' or 'timestamp,candidate,probability').
+    
+    Args:
+        csv_file: Path to the CSV file
+        use_top_k_filter: Whether to apply top-K filtering for large datasets
+        
+    Returns:
+        Prepared long-format DataFrame ready for analysis
+    """
+    import pandas as pd
+    
+    df = pd.read_csv(csv_file)
+    
+    # Check if we have the simple t,p format or timestamp,candidate,probability format
+    if set(df.columns) == {'t', 'p'}:
+        # Simple t,p format - create a single market
+        df['time'] = pd.to_datetime(df['t'])
+        df['market'] = 'market_1'
+        df['p_t'] = df['p']
+        df_long = df[['time', 'market', 'p_t']].copy()
+    else:
+        # timestamp,candidate,probability format
+        if 'timestamp' in df.columns and 'candidate' in df.columns and 'probability' in df.columns:
+            df['time'] = pd.to_datetime(df['timestamp'])
+            df['market'] = df['candidate']
+            df['p_t'] = df['probability']
+            df_long = df[['time', 'market', 'p_t']].copy()
+        else:
+            raise ValueError(f"Unexpected CSV format. Columns: {list(df.columns)}")
+    
+    # Apply top-K filtering for large datasets
+    if use_top_k_filter and len(df_long['market'].unique()) > 6:
+        print(f"Large dataset detected ({len(df_long['market'].unique())} candidates, {len(df_long)} data points)")
+        df_long = filter_top_candidates(df_long, top_k=5, min_prob_threshold=0.05)
+        print(f"After filtering: {len(df_long['market'].unique())} candidates, {len(df_long)} data points")
+    
+    # Sort and prepare
+    df_long = df_long.sort_values(['market', 'time']).reset_index(drop=True)
+    df_long['p_prev'] = df_long.groupby('market')['p_t'].shift(1)
+    df_long = df_long.dropna(subset=['p_prev'])
+    
+    # Ensure p_t and p_prev are floats
+    df_long['p_t'] = df_long['p_t'].astype(float)
+    df_long['p_prev'] = df_long['p_prev'].astype(float)
+    
+    # Re-calculate snapshot index `i` after dropping rows
+    df_long["i"] = df_long.groupby("market").cumcount() + 1
+    
+    return df_long
+
+def calculate_regimes(df_long: pd.DataFrame, window_size_str: str, penalty: float) -> pd.DataFrame:
+    """
+    Calculate volatility regimes for all markets.
+    
+    Args:
+        df_long: DataFrame in long format with timestamp, market, price, and volatility columns
+        window_size_str: String specifying the window size for volatility calculation
+        penalty: Penalty parameter for change point detection
+        
+    Returns:
+        DataFrame containing regime information for each market
+    """
+    # Calculate rolling volatility using time-based window
+    df_long = calculate_rolling_volatility(df_long, window_size_str)
+    
+    # Get first non-zero volatility for each market
+    first_nonzero = get_first_nonzero_volatility(df_long)
+    
+    # Find convergence regimes with batch processing
+    df_regimes = find_convergence_regimes(
+        df_long, first_nonzero, pen=penalty, model="l2", batch_size=2000
+    )
+    
+    return df_regimes
