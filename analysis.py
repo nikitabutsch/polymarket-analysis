@@ -63,22 +63,7 @@ def compute_belief_update(p0, p1):
         # Normalize by the potential loss
         return (p0 - p1) / p0 if p0 != 0 else 0.0
 
-# def calculate_belief_metrics(df_long):
-#     """
-#     Calculates belief updates and their cumulative spread for each market.
-#
-#     Args:
-#         df_long (pd.DataFrame): A long-format DataFrame from `prepare_long_dataframe`.
-#
-#     Returns:
-#         pd.DataFrame: The input DataFrame with added columns: 'b_i' (belief update),
-#             'cum_max_b', 'cum_min_b', and 'delta_b' (cumulative spread).
-#     """
-#     df_long["b_i"] = df_long.apply(lambda r: compute_belief_update(r.p_prev, r.p_t), axis=1)
-#     df_long["cum_max_b"] = df_long.groupby("market")["b_i"].cummax()
-#     df_long["cum_min_b"] = df_long.groupby("market")["b_i"].cummin()
-#     df_long["delta_b"] = df_long["cum_max_b"] - df_long["cum_min_b"]
-#     return df_long
+
 
 def calculate_rolling_belief_spread(df_long, window_size_str):
     """
@@ -227,7 +212,6 @@ def find_convergence_regimes(
         
         # Apply batch processing for large datasets
         if len(series) > batch_size:
-            print(f"  Processing {market} in batches ({len(series)} points, batch_size={batch_size})")
             breakpoints = []
             offset = 0
             
@@ -235,19 +219,15 @@ def find_convergence_regimes(
                 batch_end = min(batch_start + batch_size, len(series))
                 batch_series = series[batch_start:batch_end]
                 
-                # Detect breakpoints in this batch
                 algo = rpt.Pelt(model=model).fit(batch_series)
                 batch_breakpoints = algo.predict(pen=pen)
                 
-                # Adjust breakpoints to global indices and add to list
-                adjusted_breakpoints = [bp + offset for bp in batch_breakpoints[:-1]]  # Exclude last point (end of batch)
+                adjusted_breakpoints = [bp + offset for bp in batch_breakpoints[:-1]]
                 breakpoints.extend(adjusted_breakpoints)
                 offset += len(batch_series)
             
-            # Add final endpoint
             breakpoints.append(len(series))
         else:
-            # Standard processing for smaller datasets
             algo = rpt.Pelt(model=model).fit(series)
             breakpoints = algo.predict(pen=pen)
 
@@ -288,17 +268,14 @@ def find_convergence_regimes(
 
     df_regimes = pd.DataFrame(regime_rows)
 
-    # Post-process to make regime visualizations contiguous.
-    # The `end_time` of one regime is set to the `start_time` of the next one
-    # to avoid visual gaps in the plots.
+    # Make regime visualizations contiguous
     df_regimes = df_regimes.sort_values(["market", "start_time"])
     df_regimes["end_time"] = (
         df_regimes.groupby("market")["start_time"]
         .shift(-1)
-        .fillna(df_regimes["end_time"])  # Keep original end_time for the last regime
+        .fillna(df_regimes["end_time"])
     )
     
-    # Recalculate duration based on the new contiguous end_time
     df_regimes["duration"] = df_regimes["end_time"] - df_regimes["start_time"]
 
     return df_regimes
@@ -406,7 +383,7 @@ def calculate_decay_rate(df_long, first_nonzero):
             continue
 
         sub = grp.loc[(grp["i"] >= i0) & (grp["volatility"] > 1e-6)].copy()
-        if len(sub) < 5:  # Need sufficient data for a meaningful regression
+        if len(sub) < 5:
             decay_rows.append({"market": market, "lambda": None, "r2": None})
             continue
 
@@ -446,17 +423,11 @@ def calculate_auc(df_long, first_nonzero):
         else:
             # Convert time to numerical values (days since start) for integration
             time_start = sub["time"].min()
-            time_numeric = (sub["time"] - time_start).dt.total_seconds() / (24 * 3600)  # days
+            time_numeric = (sub["time"] - time_start).dt.total_seconds() / (24 * 3600)
             
-            # Use np.trapz for numerical integration with respect to time
             auc = np.trapz(y=sub["volatility"], x=time_numeric)
-            
-            # Time span calculation
-            time_span = (sub["time"].max() - sub["time"].min()).total_seconds() / (24 * 3600)  # days
-            
-            # For normalized AUC, the AUC is already "per day" since we integrated over time
-            # But we can also calculate average volatility for comparison
-            normalized_auc = auc / max(time_span, 1)  # Average volatility over the period
+            time_span = (sub["time"].max() - sub["time"].min()).total_seconds() / (24 * 3600)
+            normalized_auc = auc / max(time_span, 1)
             
         auc_rows.append({
             "market": market, 
@@ -489,9 +460,7 @@ def filter_top_candidates(df_long: pd.DataFrame, top_k: int = 5, min_prob_thresh
     # Get top-K candidates by max probability
     top_candidates = eligible_candidates.nlargest(top_k).index.tolist()
     
-    print(f"Filtering to top {len(top_candidates)} candidates from {len(max_probs)} total:")
-    for candidate in top_candidates:
-        print(f"  - {candidate}: max prob = {max_probs[candidate]:.3f}")
+
     
     # Filter the DataFrame
     df_filtered = df_long[df_long['market'].isin(top_candidates)].copy()
@@ -516,15 +485,12 @@ def prepare_data_for_analysis(csv_file: str, use_top_k_filter: bool = True, star
     
     df = pd.read_csv(csv_file)
     
-    # Check if we have the simple t,p format or timestamp,candidate,probability format
     if set(df.columns) == {'t', 'p'}:
-        # Simple t,p format - create a single market
         df['time'] = pd.to_datetime(df['t'])
         df['market'] = 'market_1'
         df['p_t'] = df['p']
         df_long = df[['time', 'market', 'p_t']].copy()
     else:
-        # timestamp,candidate,probability format
         if 'timestamp' in df.columns and 'candidate' in df.columns and 'probability' in df.columns:
             df['time'] = pd.to_datetime(df['timestamp'])
             df['market'] = df['candidate']
@@ -533,29 +499,20 @@ def prepare_data_for_analysis(csv_file: str, use_top_k_filter: bool = True, star
         else:
             raise ValueError(f"Unexpected CSV format. Columns: {list(df.columns)}")
     
-    # Apply date filtering if specified
     if start_date:
-        start_datetime = pd.to_datetime(start_date, utc=True)  # Make timezone-aware for compatibility
-        initial_count = len(df_long)
+        start_datetime = pd.to_datetime(start_date, utc=True)
         df_long = df_long[df_long['time'] >= start_datetime].copy()
-        print(f"Date filter applied (>= {start_date}): {initial_count} → {len(df_long)} data points")
     
-    # Apply top-K filtering for large datasets
     if use_top_k_filter and len(df_long['market'].unique()) > 6:
-        print(f"Large dataset detected ({len(df_long['market'].unique())} candidates, {len(df_long)} data points)")
         df_long = filter_top_candidates(df_long, top_k=5, min_prob_threshold=0.05)
-        print(f"After filtering: {len(df_long['market'].unique())} candidates, {len(df_long)} data points")
     
-    # Sort and prepare
     df_long = df_long.sort_values(['market', 'time']).reset_index(drop=True)
     df_long['p_prev'] = df_long.groupby('market')['p_t'].shift(1)
     df_long = df_long.dropna(subset=['p_prev'])
     
-    # Ensure p_t and p_prev are floats
     df_long['p_t'] = df_long['p_t'].astype(float)
     df_long['p_prev'] = df_long['p_prev'].astype(float)
     
-    # Re-calculate snapshot index `i` after dropping rows
     df_long["i"] = df_long.groupby("market").cumcount() + 1
     
     return df_long
@@ -572,13 +529,8 @@ def calculate_regimes(df_long: pd.DataFrame, window_size_str: str, penalty: floa
     Returns:
         DataFrame containing regime information for each market
     """
-    # Calculate rolling volatility using time-based window
     df_long = calculate_rolling_volatility(df_long, window_size_str)
-    
-    # Get first non-zero volatility for each market
     first_nonzero = get_first_nonzero_volatility(df_long)
-    
-    # Find convergence regimes with batch processing
     df_regimes = find_convergence_regimes(
         df_long, first_nonzero, pen=penalty, model="l2", batch_size=10000
     )
@@ -605,7 +557,6 @@ def calculate_regime_contexts(df_long: pd.DataFrame, df_regimes: pd.DataFrame) -
         end_time = regime['end_time']
         mean_volatility = regime['mean_volatility']
         
-        # Get market data for this regime period
         market_data = df_long[
             (df_long['market'] == market) &
             (df_long['time'] >= start_time) &
@@ -615,17 +566,16 @@ def calculate_regime_contexts(df_long: pd.DataFrame, df_regimes: pd.DataFrame) -
         if len(market_data) == 0:
             continue
             
-        # Calculate average price during this regime
         price_col = "p_t" if "p_t" in market_data.columns else "price"
         avg_price = market_data[price_col].mean()
         
-        # Categorize regime based on price context
+
         if avg_price >= 0.65:
-            context = "High-Confidence"  # Strong favorite
+            context = "High-Confidence"
         elif avg_price >= 0.35:
-            context = "Contested"  # Tight race
+            context = "Contested"
         else:
-            context = "Long-shot"  # Underdog
+            context = "Long-shot"
             
         regime_contexts.append({
             'market': market,
@@ -634,7 +584,7 @@ def calculate_regime_contexts(df_long: pd.DataFrame, df_regimes: pd.DataFrame) -
             'mean_volatility': mean_volatility,
             'avg_price': avg_price,
             'context': context,
-            'regime_duration': (end_time - start_time).total_seconds() / 3600  # Duration in hours
+            'regime_duration': (end_time - start_time).total_seconds() / 3600
         })
     
     return pd.DataFrame(regime_contexts)
@@ -649,14 +599,12 @@ def aggregate_volatility_by_context(df_regime_contexts: pd.DataFrame) -> pd.Data
     Returns:
         DataFrame with aggregated volatility by market and context
     """
-    # Group by market and context, calculate mean volatility
     context_summary = df_regime_contexts.groupby(['market', 'context']).agg({
         'mean_volatility': ['mean', 'std', 'count'],
-        'regime_duration': 'sum',  # Total time spent in this context
-        'avg_price': 'mean'  # Average price across all regimes in this context
+        'regime_duration': 'sum',
+        'avg_price': 'mean'
     }).reset_index()
     
-    # Flatten column names
     context_summary.columns = [
         'market', 'context', 'volatility_mean', 'volatility_std', 'regime_count',
         'total_duration_hours', 'avg_price_in_context'
@@ -681,17 +629,15 @@ def calculate_frontrunner_vs_uncertainty(all_elections_data: list) -> pd.DataFra
         price_col = "p_t" if "p_t" in df_long.columns else "price" 
         max_prices = df_long.groupby('market')[price_col].max()
         
-        # Merge with AUC data
         df_auc_clean = df_auc.dropna(subset=['AUC_normalized'])
         
         for _, row in df_auc_clean.iterrows():
             candidate = row['market']
-            # Use normalized AUC for fair cross-election comparison
             total_uncertainty = row['AUC_normalized'] if pd.notna(row['AUC_normalized']) else row['AUC']
             max_price = max_prices.get(candidate, 0)
             
-            # Clean candidate name for display
             def clean_candidate_name(name):
+                """Extract candidate name from question format."""
                 if "Will " in name:
                     start = name.find("Will ") + 5
                     if " be the" in name:

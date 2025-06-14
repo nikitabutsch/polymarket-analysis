@@ -55,10 +55,8 @@ def get_clob_token_id(market):
     return clob_list[0] if clob_list else None
 
 def fetch_price_history_chunked(clob_token_id, start_ts, end_ts, fidelity, chunk_days=15, event_slug=None):
-    # Check cache
     cache_file = Path("data") / event_slug / f"{clob_token_id}.json"
     if cache_file.exists():
-        print(f"Loading cached data from {cache_file}")
         with open(cache_file, "r") as f:
             return json.load(f)
 
@@ -75,28 +73,20 @@ def fetch_price_history_chunked(clob_token_id, start_ts, end_ts, fidelity, chunk
             "fidelity": fidelity
         }
         
-        print(f"Requesting chunk: {datetime.datetime.fromtimestamp(current_start, tz=datetime.timezone.utc).isoformat()} to {datetime.datetime.fromtimestamp(current_end, tz=datetime.timezone.utc).isoformat()}")
-        
         resp = requests.get("https://clob.polymarket.com/prices-history", params=params)
         if resp.status_code != 200:
-            print(f"Error: {resp.status_code} {resp.text}")
             break
             
         data = resp.json()
         if isinstance(data, dict) and "history" in data:
-            print(f"Received {len(data['history'])} points")
             all_prices.extend(data["history"])
-        else:
-            print(f"Unexpected response: {data}")
             
         current_start = current_end
-        time.sleep(0.5)  # be nice to the API
+        time.sleep(0.5)
 
-    # Save to cache
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     with open(cache_file, "w") as f:
         json.dump(all_prices, f)
-    print(f"Saved data to {cache_file}")
     
     return all_prices
 
@@ -149,7 +139,6 @@ def main():
         if not clob_token_id:
             continue
             
-        print(f"\nFetching data for market: {market.get('question', 'Unknown')}")
         history = fetch_price_history_chunked(
             clob_token_id,
             start_ts,
@@ -160,11 +149,6 @@ def main():
         )
         
         if history:
-            print(f"Total points fetched: {len(history)}")
-            print("First point:", json.dumps(history[0], indent=2))
-            print("Last point:", json.dumps(history[-1], indent=2))
-            
-            # Add to combined data
             for point in history:
                 timestamp = datetime.datetime.fromtimestamp(point["t"], tz=datetime.timezone.utc)
                 all_data.append({
@@ -173,15 +157,14 @@ def main():
                     "probability": point["p"]
                 })
     
-    # Create and save CSV
     if all_data:
         df = pd.DataFrame(all_data)
         df = df.sort_values("timestamp")
         csv_file = event_dir / "all_markets.csv"
         df.to_csv(csv_file, index=False)
-        print(f"\nSaved combined data to {csv_file}")
+        print(f"Saved combined data to {csv_file}")
         print(f"Total data points: {len(df)}")
-        print("\nCandidates and their data points:")
+        print("Candidates and their data points:")
         print(df.groupby("candidate").size())
 
 if __name__ == "__main__":

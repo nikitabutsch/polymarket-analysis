@@ -1,5 +1,8 @@
 """
-Main script for analyzing multiple election markets from Polymarket.
+Polymarket Election Analysis System
+
+This script analyzes multiple election markets from Polymarket to identify
+volatility patterns, market regimes, and cross-election comparisons.
 """
 
 import polymarket_api as api
@@ -11,22 +14,18 @@ import os
 from pathlib import Path
 import subprocess
 
-# --- Configuration ---
+# Configuration
 EVENT_URLS = [
-    "https://polymarket.com/event/presidential-election-winner-2024",  # USA
-    "https://polymarket.com/event/will-erdogan-win-the-2023-turkish-presidential-election",  # Turkey
-    # "https://polymarket.com/event/who-will-win-the-2022-french-presidential-election",  # France
-    "https://polymarket.com/event/poland-presidential-election"  # Poland
+    "https://polymarket.com/event/presidential-election-winner-2024",
+    "https://polymarket.com/event/will-erdogan-win-the-2023-turkish-presidential-election",
+    "https://polymarket.com/event/poland-presidential-election"
 ]
 
-# Fidelity is the time step in minutes between price samples
-FIDELITY = 800  # minutes
-# The time window for calculating rolling volatility
-ROLLING_WINDOW = "4d"
-# Penalty for the change point detection. Higher values lead to fewer regimes.
-PENALTY = 0.0006
+FIDELITY = 800  # Time step in minutes between price samples
+ROLLING_WINDOW = "4d"  # Time window for calculating rolling volatility
+PENALTY = 0.0006  # Penalty for change point detection algorithm
 
-# Selected candidates for clean visualizations (manually curated)
+# Selected candidates for focused visualizations
 SELECTED_CANDIDATES = {
     "presidential-election-winner-2024": [
         "Will Donald Trump win the 2024 US Presidential Election?",
@@ -45,10 +44,15 @@ SELECTED_CANDIDATES = {
 def fetch_data(event_url: str) -> str:
     """
     Fetch market data for an event using fetch_market_data.py.
-    Returns the event slug for use in data paths.
+    
+    Args:
+        event_url: The URL of the Polymarket event
+        
+    Returns:
+        str: The event slug for use in data paths
     """
     event_slug = api.extract_slug_from_event_url(event_url)
-    print(f"\nFetching data for {event_slug}...")
+    print(f"Fetching data for {event_slug}...")
     
     cmd = [
         "python", "fetch_market_data.py",
@@ -66,15 +70,16 @@ def analyze_event(event_url: str):
     
     Args:
         event_url: The URL of the Polymarket event to analyze
+        
+    Returns:
+        tuple: (election_name, df_long, df_auc) for cross-election analysis
     """
-    print(f"\n{'='*80}")
+    print(f"{'='*80}")
     print(f"Analyzing event: {event_url}")
-    print(f"{'='*80}\n")
+    print(f"{'='*80}")
     
-    # 1. Fetch data using fetch_market_data.py
     event_slug = fetch_data(event_url)
     
-    # 2. Load and process the data
     data_dir = Path("data") / event_slug
     csv_file = data_dir / "all_markets.csv"
     
@@ -94,92 +99,71 @@ def analyze_event(event_url: str):
     print(f"Loaded {len(df_long)} rows, {len(df_long['market'].unique())} unique markets")
     
     # Calculate regimes for context analysis
-    print("\nCalculating regimes for context analysis...")
+    print("Calculating regimes for context analysis...")
     df_regimes = analysis.calculate_regimes(df_long, ROLLING_WINDOW, PENALTY)
     print(f"Calculated {len(df_regimes)} regimes")
     
-    # Calculate AUC (Area Under Curve) for total uncertainty analysis
+    # Calculate AUC for total uncertainty analysis
     print("Calculating total uncertainty (AUC)...")
     first_nonzero = analysis.get_first_nonzero_volatility(df_long)
     df_auc = analysis.calculate_auc(df_long, first_nonzero)
     print(f"Calculated AUC for {len(df_auc)} markets")
     
-    # Calculate regime contexts for volatility by context analysis
+    # Calculate regime contexts for volatility analysis
     print("Analyzing regime contexts...")
     df_regime_contexts = analysis.calculate_regime_contexts(df_long, df_regimes)
     df_context_summary = analysis.aggregate_volatility_by_context(df_regime_contexts)
     print(f"Analyzed {len(df_regime_contexts)} regime contexts across {len(df_context_summary)} market-context combinations")
 
-    # 3. Generate plots
-    print("\nGenerating plots...")
-    active_markets = df_long["market"].unique()  # Use df_long instead of df_regimes
+    # Generate plots
+    print("Generating plots...")
+    active_markets = df_long["market"].unique()
+    
     if len(active_markets) == 0:
         print("No markets with significant price activity found. Skipping plots.")
     else:
-        # Create a directory for this event's plots
         plots_dir = Path("plots") / event_slug
         plots_dir.mkdir(parents=True, exist_ok=True)
         
-        # Generate individual regime plots for each market - commented out to save time
-        # for market in active_markets:
-        #     df_market_long = df_long[df_long["market"] == market]
-        #     df_regimes_market = df_regimes[df_regimes["market"] == market]
-        #     plot_regimes(market, df_market_long, df_regimes_market, save_dir=str(plots_dir))
-        
-        # Get selected candidates for this election
         selected_candidates = SELECTED_CANDIDATES.get(event_slug, None)
-        
-        # Generate the Total Uncertainty bar chart
-        print("Generating Total Uncertainty bar chart...")
         election_name = event_slug.replace("-", " ").title()
+        
         plot_total_uncertainty_bar_chart(df_auc, election_name=election_name, save_dir=str(plots_dir), 
                                         selected_candidates=selected_candidates)
-        
-        # Generate the Volatility by Context bar chart
-        print("Generating Volatility by Context bar chart...")
         plot_volatility_by_context(df_context_summary, election_name=election_name, save_dir=str(plots_dir),
                                   selected_candidates=selected_candidates)
     
-    # Return data for cross-election analysis
     return (election_name, df_long, df_auc)
 
 def main():
     """
     Main function to run the Polymarket analysis pipeline for multiple events.
     """
-    # Store data from all elections for cross-election analysis
     all_elections_data = []
     
     for event_url in EVENT_URLS:
         try:
-            # Store the result for cross-election analysis
             result = analyze_event(event_url)
             if result:
                 all_elections_data.append(result)
         except Exception as e:
-            print(f"\nError analyzing event {event_url}:")
-            print(f"Error type: {type(e).__name__}")
-            print(f"Error message: {str(e)}")
-            import traceback
-            print(f"Traceback:\n{traceback.format_exc()}")
+            print(f"Error analyzing event {event_url}: {e}")
             continue
     
-    # Generate cross-election scatter plot
+    # Generate cross-election analysis
     if all_elections_data:
-        print(f"\n{'='*80}")
+        print(f"{'='*80}")
         print("Generating Cross-Election Analysis: Front-Runner vs. Uncertainty")
-        print(f"{'='*80}\n")
+        print(f"{'='*80}")
         
         df_scatter = analysis.calculate_frontrunner_vs_uncertainty(all_elections_data)
         plots_dir = Path("plots")
         plots_dir.mkdir(parents=True, exist_ok=True)
         plot_frontrunner_vs_uncertainty_scatter(df_scatter, save_dir=str(plots_dir))
         
-        # Generate Half-Life Comparison chart
         print("Generating Half-Life Comparison chart...")
         plot_half_life_comparison(all_elections_data, save_dir=str(plots_dir))
 
 if __name__ == "__main__":
-    # The 'trapz' function used in analysis.py is deprecated. This suppresses the warning.
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     main() 

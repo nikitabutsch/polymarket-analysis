@@ -6,9 +6,7 @@ import os
 import datetime
 from tqdm import tqdm
 
-# --------------------------------------------------------------------------
-# Low-Level API Wrappers & Helpers
-# --------------------------------------------------------------------------
+
 
 def extract_slug_from_event_url(event_url: str) -> str:
     """
@@ -160,9 +158,7 @@ def fetch_market_details(event_url: str) -> dict:
 
     return mapping
 
-# --------------------------------------------------------------------------
-# Higher-Level Functions
-# --------------------------------------------------------------------------
+
 
 def fetch_market_token_mapping(event_url: str) -> dict:
     """
@@ -183,8 +179,6 @@ def fetch_market_token_mapping(event_url: str) -> dict:
         first_token = clob_list[0] if clob_list else None
         if first_token:
             mapping[question] = first_token
-        else:
-            print(f"Warning: no valid clobTokenIds for market question: {question!r}. Skipping.")
 
     return mapping
 
@@ -217,7 +211,6 @@ def fetch_and_merge_price_histories(token_mapping: dict, fidelity: int = 720, st
         )
         
         if not price_data:
-            print(f"Warning: no history for {label!r}, skipping.")
             continue
 
         df = pd.DataFrame(price_data)

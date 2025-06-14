@@ -202,14 +202,7 @@ def plot_regimes(market_name: str, df_market_long: pd.DataFrame, df_regimes: pd.
         ax2.hlines(y=mean_vol, xmin=start_time, xmax=end_time, 
                   colors='#7A6B8A', linestyles='dashed', linewidth=2, alpha=0.6, zorder=1)
 
-        # Mean volatility annotation - temporarily disabled to reduce clutter
-        # mid_time = start_time + (end_time - start_time) / 2
-        # ax2.text(
-        #     mid_time, mean_vol, f"μ = {mean_vol:.3f}",
-        #     ha="center", va="bottom",
-        #     bbox=dict(facecolor="white", alpha=0.9, edgecolor="gray", linewidth=0.8, pad=2),
-        #     fontsize=9, color='#333333'
-        # )
+
 
     # Add legend and formatting
     lines = line1 + line2
@@ -247,7 +240,6 @@ def plot_total_uncertainty_bar_chart(df_auc: pd.DataFrame, election_name: str = 
     # Filter to selected candidates if provided
     if selected_candidates:
         df_clean = df_clean[df_clean['market'].isin(selected_candidates)]
-        print(f"Filtered to {len(df_clean)} selected candidates for Total Uncertainty plot")
     
     df_clean = df_clean.sort_values('AUC', ascending=False)
     
@@ -273,65 +265,52 @@ def plot_total_uncertainty_bar_chart(df_auc: pd.DataFrame, election_name: str = 
     bars = ax.barh(y_pos, df_clean['AUC'], color=colors, height=0.7, 
                    alpha=0.8, edgecolor='white', linewidth=1)
     
-    # Style the labels with clean, professional font (extract key name parts)
     def clean_candidate_name(name):
-        # Extract the main candidate name from long questions
+        """Extract candidate name from question format."""
         if "Will " in name:
             start = name.find("Will ") + 5
-            # Handle different question formats
             if " be the" in name:
-                # Polish format: "Will Rafał Trzaskowski be the next President of Poland?"
                 end = name.find(" be the")
             elif " win the" in name:
-                # US/Turkey format: "Will Donald Trump win the 2024 US Presidential Election?"
                 end = name.find(" win the")
             else:
-                # Fallback - take everything after "Will "
                 end = len(name)
             
             if start < end:
                 return name[start:end]
         
-        # Fallback to basic cleaning
         return name.replace('_', ' ').title()
     
     candidate_labels = [clean_candidate_name(name) for name in df_clean['market']]
     ax.set_yticks(y_pos)
     ax.set_yticklabels(candidate_labels, fontsize=12, color='#2C2C2C', weight='400')
     
-    # Style the x-axis
     ax.set_xlabel('Market Uncertainty (AUC)', fontsize=13, color='#2C2C2C', weight='500')
     ax.tick_params(axis='x', colors='#666666', labelsize=11)
     
-    # Clean up spines
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.spines['left'].set_color('#E0E0E0')
     ax.spines['bottom'].set_color('#E0E0E0')
     
-    # Add subtle grid
     ax.grid(True, axis='x', alpha=0.3, linestyle='-', linewidth=0.5, color='#E0E0E0')
     ax.set_axisbelow(True)
     
-    # Add value labels with clean styling
     for i, (bar, auc_val) in enumerate(zip(bars, df_clean['AUC'])):
         width = bar.get_width()
         ax.text(width + width*0.02, bar.get_y() + bar.get_height()/2,
                 f'{auc_val:.3f}', ha='left', va='center', 
                 fontsize=10, weight='500', color='#333333')
     
-    # Clean, professional title
     if election_name:
         title = f"{election_name} - Market Uncertainty Index"        
         ax.set_title(title, fontsize=16, weight='600', color='#2C2C2C', pad=20)
     else:
         ax.set_title("Market Uncertainty Index", fontsize=16, weight='600', color='#2C2C2C', pad=20)
     
-    # Adjust layout for clean appearance
     plt.tight_layout()
     plt.subplots_adjust(left=0.25, top=0.9, right=0.95, bottom=0.1)
     
-    # Save with high quality
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     
@@ -340,14 +319,7 @@ def plot_total_uncertainty_bar_chart(df_auc: pd.DataFrame, election_name: str = 
                 dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
     plt.close(fig)
     
-    # Print summary
-    print(f"\nTotal Uncertainty Summary ({election_name}):")
-    print("=" * 50)
-    for i, row in df_clean.iterrows():
-        print(f"{row['market']:<30} AUC: {row['AUC']:.3f}")
-    print(f"\nMost uncertain market: {df_clean.iloc[0]['market']} (AUC: {df_clean.iloc[0]['AUC']:.3f})")
-    if len(df_clean) > 1:
-        print(f"Least uncertain market: {df_clean.iloc[-1]['market']} (AUC: {df_clean.iloc[-1]['AUC']:.3f})") 
+ 
 
 def plot_volatility_by_context(df_context_summary: pd.DataFrame, election_name: str = "", save_dir: str = "output", selected_candidates: list = None):
     """
@@ -367,7 +339,6 @@ def plot_volatility_by_context(df_context_summary: pd.DataFrame, election_name: 
     # Filter to selected candidates if provided
     if selected_candidates:
         df_context_summary = df_context_summary[df_context_summary['market'].isin(selected_candidates)]
-        print(f"Filtered to {len(df_context_summary['market'].unique())} selected candidates for Context Volatility plot")
     
     # Pivot data for grouped bar chart
     pivot_data = df_context_summary.pivot(index='market', columns='context', values='volatility_mean')
@@ -386,26 +357,20 @@ def plot_volatility_by_context(df_context_summary: pd.DataFrame, election_name: 
         print("No valid context data to plot")
         return
     
-    # Clean candidate names (extract key name parts)
     def clean_candidate_name(name):
-        # Extract the main candidate name from long questions
+        """Extract candidate name from question format."""
         if "Will " in name:
             start = name.find("Will ") + 5
-            # Handle different question formats
             if " be the" in name:
-                # Polish format: "Will Rafał Trzaskowski be the next President of Poland?"
                 end = name.find(" be the")
             elif " win the" in name:
-                # US/Turkey format: "Will Donald Trump win the 2024 US Presidential Election?"
                 end = name.find(" win the")
             else:
-                # Fallback - take everything after "Will "
                 end = len(name)
             
             if start < end:
                 return name[start:end]
         
-        # Fallback to basic cleaning
         return name.replace('_', ' ').title()
     
     pivot_data.index = [clean_candidate_name(name) for name in pivot_data.index]
@@ -415,14 +380,12 @@ def plot_volatility_by_context(df_context_summary: pd.DataFrame, election_name: 
     fig.patch.set_facecolor('white')
     ax.set_facecolor('white')
     
-    # Define colors for each context (professional, distinctive color mapping)
     colors = {
-        'Long-shot': '#8B5CF6',      # Purple - speculative, uncertain
-        'Contested': '#EF4444',       # Red - heated, volatile competition  
-        'High-Confidence': '#059669'  # Green - stable, confident
+        'Long-shot': '#8B5CF6',
+        'Contested': '#EF4444',
+        'High-Confidence': '#059669'
     }
     
-    # Create grouped bars with better sizing
     bar_width = 0.28
     x_pos = np.arange(len(pivot_data))
     
@@ -435,39 +398,33 @@ def plot_volatility_by_context(df_context_summary: pd.DataFrame, election_name: 
             alpha=0.9, edgecolor='white', linewidth=2
         )
     
-    # Customize the chart with much larger fonts
     ax.set_xlabel('Candidate', fontsize=16, color='#2C2C2C', weight='600')
     ax.set_ylabel('Average Volatility', fontsize=16, color='#2C2C2C', weight='600')
     ax.set_xticks(x_pos)
     ax.set_xticklabels(pivot_data.index, rotation=0, ha='center', fontsize=14, weight='500')
     
-    # Clean up appearance
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.spines['left'].set_color('#CCCCCC')
     ax.spines['bottom'].set_color('#CCCCCC')
     ax.tick_params(colors='#444444', which='both', labelsize=12)
     
-    # Add subtle grid
     ax.grid(True, axis='y', alpha=0.4, linestyle='-', linewidth=0.8, color='#E8E8E8')
     ax.set_axisbelow(True)
     
-    # Add value labels on bars with larger font
     for context, bar_group in bars.items():
         for bar in bar_group:
             height = bar.get_height()
-            if height > 0:  # Only label non-zero bars
+            if height > 0:
                 ax.text(bar.get_x() + bar.get_width()/2., height + height*0.02,
                         f'{height:.3f}', ha='center', va='bottom', 
                         fontsize=12, weight='600', color='#2C2C2C')
     
-    # Title and legend with larger fonts
     title = "Volatility by Market Context"
     if election_name:
         title = f"{election_name} - {title}"
     ax.set_title(title, fontsize=18, weight='600', color='#2C2C2C', pad=25)
     
-    # Legend with explanation
     legend = ax.legend(loc='upper left', bbox_to_anchor=(0.02, 0.98), frameon=True, 
                       facecolor='white', edgecolor='#CCCCCC', fontsize=12)
     legend.get_frame().set_alpha(0.95)
@@ -614,10 +571,7 @@ def plot_frontrunner_vs_uncertainty_scatter(df_scatter: pd.DataFrame, save_dir: 
                 dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
     plt.close(fig)
     
-    # Print insights
-    print(f"\nFront-Runner vs. Uncertainty Analysis:")
-    print("=" * 50)
-    print(f"Total candidates analyzed: {len(df_scatter)}")
+
     
     if len(df_scatter) > 1:
         correlation = np.corrcoef(df_scatter['max_price'], df_scatter['total_uncertainty'])[0, 1]
@@ -650,29 +604,25 @@ def plot_half_life_comparison(all_elections_data: list, save_dir: str = "output"
         save_dir (str): Directory to save the plot
     """
     
-    # Collect half-life data from all elections
     half_life_data = []
     
     for election_name, df_long, df_auc in all_elections_data:
-        # Calculate half-life for this election
         first_nonzero = analysis.get_first_nonzero_volatility(df_long)
         df_half_life = analysis.calculate_half_life(df_long, first_nonzero)
         
         for _, row in df_half_life.iterrows():
             if pd.notna(row['i_half']) and row['i_half'] is not None:
-                # Convert i_half to time duration
                 market = row['market']
                 i_half = int(row['i_half'])
                 time_half = row['time_half']
                 
-                # Get the initial time for this market
                 market_data = df_long[df_long['market'] == market].sort_values('time')
                 if len(market_data) > 0:
                     initial_time = market_data['time'].iloc[0]
                     half_life_hours = (time_half - initial_time).total_seconds() / 3600
                     
-                    # Clean candidate name
                     def clean_candidate_name(name):
+                        """Extract candidate name from question format."""
                         if "Will " in name:
                             start = name.find("Will ") + 5
                             if " be the" in name:
@@ -695,35 +645,28 @@ def plot_half_life_comparison(all_elections_data: list, save_dir: str = "output"
                     })
     
     if not half_life_data:
-        print("No half-life data available for plotting")
         return
         
     df_half_life = pd.DataFrame(half_life_data)
     
-    # Filter out irrelevant candidates manually
     candidates_to_exclude = ['Gavin Newsom']
     df_half_life = df_half_life[~df_half_life['candidate_clean'].isin(candidates_to_exclude)]
     
     if df_half_life.empty:
-        print("No relevant half-life data after filtering")
         return
     
-    # Create the bar chart
     fig, ax = plt.subplots(figsize=(12, 8))
     fig.patch.set_facecolor('white')
     ax.set_facecolor('white')
     
-    # Define colors for different elections
     election_colors = {
-        'Presidential Election Winner 2024': '#2563EB',  # Blue
-        'Poland Presidential Election': '#DC2626',        # Red  
-        'Will Erdogan Win The 2023 Turkish Presidential Election': '#059669'  # Green
+        'Presidential Election Winner 2024': '#2563EB',
+        'Poland Presidential Election': '#DC2626',
+        'Will Erdogan Win The 2023 Turkish Presidential Election': '#059669'
     }
     
-    # Sort by half-life for better visualization
     df_half_life = df_half_life.sort_values('half_life_days')
     
-    # Create bars
     bars = []
     colors = []
     for _, row in df_half_life.iterrows():
@@ -734,7 +677,6 @@ def plot_half_life_comparison(all_elections_data: list, save_dir: str = "output"
     bars = ax.barh(y_pos, df_half_life['half_life_days'], 
                    color=colors, alpha=0.8, edgecolor='white', linewidth=2)
     
-    # Customize the chart
     ax.set_yticks(y_pos)
     ax.set_yticklabels(df_half_life['candidate_clean'], fontsize=13, weight='500')
     ax.set_xlabel('Half-Life (days to 50% convergence)', fontsize=16, 
@@ -742,25 +684,21 @@ def plot_half_life_comparison(all_elections_data: list, save_dir: str = "output"
     ax.set_title('Market Convergence Speed: Half-Life After Volatility Shocks', 
                  fontsize=18, weight='600', color='#2C2C2C', pad=25)
     
-    # Clean up appearance
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.spines['left'].set_color('#CCCCCC')
     ax.spines['bottom'].set_color('#CCCCCC')
     ax.tick_params(colors='#444444', which='both', labelsize=12)
     
-    # Add grid
     ax.grid(True, axis='x', alpha=0.3, linestyle='-', linewidth=0.8, color='#E8E8E8')
     ax.set_axisbelow(True)
     
-    # Add value labels
     for i, (bar, days) in enumerate(zip(bars, df_half_life['half_life_days'])):
         width = bar.get_width()
         ax.text(width + width*0.02, bar.get_y() + bar.get_height()/2,
                 f'{days:.1f}d', ha='left', va='center', 
                 fontsize=11, weight='600', color='#2C2C2C')
     
-    # Create custom legend for elections
     legend_elements = []
     for election, color in election_colors.items():
         if election in df_half_life['election'].values:
@@ -774,16 +712,13 @@ def plot_half_life_comparison(all_elections_data: list, save_dir: str = "output"
     legend.get_frame().set_alpha(0.95)
     legend.get_frame().set_linewidth(1.5)
     
-    # Add explanation
     explanation = ("Shorter bars = faster convergence after market shocks. Shows how quickly uncertainty resolves.")
     fig.text(0.5, 0.02, explanation, ha='center', fontsize=12, 
              style='italic', color='#555555', weight='500')
     
-    # Adjust layout
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.15, top=0.9, left=0.25, right=0.95)
     
-    # Save figure
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     
@@ -791,20 +726,4 @@ def plot_half_life_comparison(all_elections_data: list, save_dir: str = "output"
                 dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
     plt.close(fig)
     
-    # Print insights
-    print(f"\nHalf-Life Analysis (Convergence Speed):")
-    print("=" * 50)
-    print("Half-life = time for volatility to drop to 50% of initial shock")
-    print()
-    
-    fastest = df_half_life.iloc[0]
-    slowest = df_half_life.iloc[-1]
-    
-    print(f"Fastest Convergence:")
-    print(f"  {fastest['candidate_clean']:<20} {fastest['half_life_days']:.1f} days")
-    print(f"Slowest Convergence:")  
-    print(f"  {slowest['candidate_clean']:<20} {slowest['half_life_days']:.1f} days")
-    print()
-    print("All Candidates (fastest to slowest):")
-    for _, row in df_half_life.iterrows():
-        print(f"  {row['candidate_clean']:<20} {row['half_life_days']:.1f} days") 
+ 
